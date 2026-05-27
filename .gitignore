@@ -1,0 +1,5 @@
+examples/**/*.ipynb
+examples/**/*.pkl
+examples/**/*.png
+misc
+**/__pycache__
