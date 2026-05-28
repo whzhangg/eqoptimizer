@@ -10,6 +10,11 @@ class PhaseCompositions:
     name: str
     compositions: typing.Dict[str, float]
 
+    def __repr__(self):
+        sorted_ele = sorted(list(self.compositions.keys()))
+        s = f'{self.name}('
+        s+= ','.join([f'x_{ele}={self.compositions[ele]:.3f}' for ele in sorted_ele])
+        return s + ')'
 
 @dataclasses.dataclass
 class EquilibriumCompositions:
@@ -17,6 +22,10 @@ class EquilibriumCompositions:
     temperature: float
     phases: typing.List[PhaseCompositions]
 
+    def __repr__(self):
+        s = f'T = {self.temperature:<6d}'
+        s += ' = '.join(str(phase) for phase in self.phases)
+        return s
 
 @dataclasses.dataclass
 class PhaseModels:

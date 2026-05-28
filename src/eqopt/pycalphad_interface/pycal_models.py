@@ -244,7 +244,7 @@ class PycalphadReferenceModel:
 
 def demo() -> None:
     from pycalphad import Database
-    from ..models import CorrectedGibbsModel, SolidSolutionModel
+    from ..models import CorrectedGibbsModel, RedlichKisterModel
 
     tdb_path = pathlib.Path(__file__).resolve().parents[3] / "examples" / "CPDDB_AlZn.tdb"
     db = Database(str(tdb_path))
@@ -256,7 +256,7 @@ def demo() -> None:
     fixed = reference.gibbs_energy([[0.25, 0.75], [0.80, 0.20]], 600.0)
     print(fixed)
     sampled = reference.sampled_internal_dof(600.0, n_samples_each_side=5)
-    correction = SolidSolutionModel(
+    correction = RedlichKisterModel(
         2,
         polynomial_order=1,
         interaction_order=1,

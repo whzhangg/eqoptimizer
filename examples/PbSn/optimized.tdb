@@ -72,18 +72,18 @@ $ FUNCTIONS FOR FCC_A1
 $-------------------------------------------------------------------------------
  PHASE FCC_A1  %  2 1   1 !
     CONSTITUENT FCC_A1  :PB,SN : VA :  !
-   PARAMETER G(FCC_A1,PB:VA;0)     298.15  +GHSERPB -81 + 0.001*T;                   5000 N !
-   PARAMETER G(FCC_A1,SN:VA;0)     298.15  +GSNFCC  - 684 - 0.513*T;                    4000 N !
-   PARAMETER G(FCC_A1,PB,SN:VA;0)  298.15  +8132.41+1.06312*T - 837 - 0.73*T;          6000 N !
+   PARAMETER G(FCC_A1,PB:VA;0)     298.15  +GHSERPB - 49 + 0.052*T;                   5000 N !
+   PARAMETER G(FCC_A1,SN:VA;0)     298.15  +GSNFCC  - 627 - 0.274*T;                    4000 N !
+   PARAMETER G(FCC_A1,PB,SN:VA;0)  298.15  +8132.41+1.06312*T - 1240 - 0.793*T;          6000 N !
 
 $-------------------------------------------------------------------------------
 $ FUNCTIONS FOR BCT_A5             
 $-------------------------------------------------------------------------------
  PHASE BCT_A5  %  2 1   3 !
     CONSTITUENT BCT_A5  :PB,SN : VA% :  !
-   PARAMETER G(BCT_A5,PB:VA;0)      298.15  +GPBBCT + 2154 + 1.9*T;                   4000 N !
-   PARAMETER G(BCT_A5,SN:VA;0)      298.15  +GHSERSN + 75 - 0.06*T;                  6000 N !
-   PARAMETER G(BCT_A5,PB,SN:VA;0)   298.15  +10117.78-11.8066*T + 2160 + 2.21*T;        6000 N !
+   PARAMETER G(BCT_A5,PB:VA;0)      298.15  +GPBBCT + 2355 + 2.04*T;                   4000 N !
+   PARAMETER G(BCT_A5,SN:VA;0)      298.15  +GHSERSN  + 124 - 0.236*T;                  6000 N !
+   PARAMETER G(BCT_A5,PB,SN:VA;0)   298.15  +10117.78-11.8066*T + 2698 + 2.345*T;        6000 N !
 
 $PB-SN
  

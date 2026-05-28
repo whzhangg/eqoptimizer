@@ -6,7 +6,7 @@ import torch
 from torch import nn, Tensor
 
 from .dtype import TORCH_FLOAT
-from .utilities import as_float_tensor, R
+from .utilities import as_float_tensor, simplex_samples_dirichlet
 
 
 class GibbsModel(nn.Module, ABC):
@@ -72,13 +72,35 @@ class GibbsModel(nn.Module, ABC):
         """Return molar Gibbs energy at imposed composition and temperature."""
 
 
+    @abstractmethod
+    def sample_degree_of_freedom(
+        self,
+        temperature,
+        *,
+        n_samples_each_side: int = 16,
+    ):
+        """Sample the model degrees of freedom used for grand-potential minimization."""
+
+
     def forward(self, x, temperature) -> Tensor:
         return self.gibbs_energy(x, temperature)
 
 
-    def grand_potential(self, mu, temperature, samples: Tensor, tau: float = 1.0) -> Tensor:
-        """Soft-min of G(x, T) - mu dot x over supplied composition samples."""
+    def grand_potential(
+        self,
+        mu,
+        temperature,
+        samples=None,
+        tau: float = 1.0,
+        n_samples_each_side: int = 16,
+    ) -> Tensor:
+        """Soft-min of G(x, T) - mu dot x over sampled degrees of freedom."""
         mu = as_float_tensor(mu, device=self.device, dtype=self.dtype)
+        if samples is None:
+            samples = self.sample_degree_of_freedom(
+                temperature,
+                n_samples_each_side=n_samples_each_side,
+            )
         samples = self.normalize_composition(samples)
         if mu.shape[-1] != self.n_components:
             raise ValueError(
@@ -89,7 +111,7 @@ class GibbsModel(nn.Module, ABC):
         return -tau * torch.logsumexp(-values / tau, dim=0)
 
 
-class SolidSolutionModel(GibbsModel):
+class RedlichKisterModel(GibbsModel):
     """Substitutional solid solution Gibbs-energy model.
 
     G(x, T) = sum_i x_i G_i(T)
@@ -116,9 +138,9 @@ class SolidSolutionModel(GibbsModel):
             raise ValueError(
                 f"Expected {n_components} elements, got {len(elements)}."
             )
-        super().__init__(name or "solid_solution", elements)
+        super().__init__(name or "redlich_kister", elements)
         if n_components < 2:
-            raise ValueError("SolidSolutionModel requires at least two components.")
+            raise ValueError("RedlichKisterModel requires at least two components.")
 
         self.polynomial_order = polynomial_order
         self.interaction_order = interaction_order
@@ -177,10 +199,24 @@ class SolidSolutionModel(GibbsModel):
 
         return pure + excess
 
+    def sample_degree_of_freedom(
+        self,
+        temperature,
+        *,
+        n_samples_each_side: int = 16,
+    ) -> Tensor:
+        """Sample the composition simplex for this substitutional model."""
+        return simplex_samples_dirichlet(
+            self.n_components,
+            n_samples_each_side=n_samples_each_side,
+            device=self.device,
+            dtype=self.dtype,
+        )
+
     def parameter_report(self) -> str:
         """Return a readable summary of optimized thermodynamic parameters."""
         lines = [
-            f"SolidSolutionModel(name={self.phase_name!r}, elements={self.elements})",
+            f"RedlichKisterModel(name={self.phase_name!r}, elements={self.elements})",
             f"temperature_ref = {self.temperature_ref:g}",
             "endmember_coeffs:",
         ]
@@ -264,6 +300,18 @@ class PycalphadGibbsModel(GibbsModel):
             return gibbs.reshape(())
         return gibbs
 
+    def sample_degree_of_freedom(
+        self,
+        temperature,
+        *,
+        n_samples_each_side: int = 16,
+    ):
+        reference_temperature = self._reference_temperature(temperature)
+        return self.reference_model.sampled_internal_dof(
+            reference_temperature,
+            n_samples_each_side=n_samples_each_side,
+        )
+
     def grand_potential(
         self,
         mu,
@@ -273,10 +321,9 @@ class PycalphadGibbsModel(GibbsModel):
         n_samples_each_side: int = 16,
     ) -> Tensor:
         """Soft-min of fixed pycalphad G0(y) - mu dot X(y)."""
-        reference_temperature = self._reference_temperature(temperature)
         if samples is None:
-            samples = self.reference_model.sampled_internal_dof(
-                reference_temperature,
+            samples = self.sample_degree_of_freedom(
+                temperature,
                 n_samples_each_side=n_samples_each_side,
             )
 
@@ -289,6 +336,7 @@ class PycalphadGibbsModel(GibbsModel):
             )
         else:
             x = self.normalize_composition(samples)
+            reference_temperature = self._reference_temperature(temperature)
             reference = self.reference_model.gibbs_energy(
                 x.detach().cpu().numpy(),
                 reference_temperature,
@@ -363,6 +411,18 @@ class CorrectedGibbsModel(GibbsModel):
             return gibbs.reshape(())
         return gibbs
 
+    def sample_degree_of_freedom(
+        self,
+        temperature,
+        *,
+        n_samples_each_side: int = 16,
+    ):
+        reference_temperature = self._reference_temperature(temperature)
+        return self.reference_model.sampled_internal_dof(
+            reference_temperature,
+            n_samples_each_side=n_samples_each_side,
+        )
+
     def grand_potential(
         self,
         mu,
@@ -372,10 +432,9 @@ class CorrectedGibbsModel(GibbsModel):
         n_samples_each_side: int = 16,
     ) -> Tensor:
         """Soft-min of G0(y) + Gcorr(X(y)) - mu dot X(y)."""
-        reference_temperature = self._reference_temperature(temperature)
         if samples is None:
-            samples = self.reference_model.sampled_internal_dof(
-                reference_temperature,
+            samples = self.sample_degree_of_freedom(
+                temperature,
                 n_samples_each_side=n_samples_each_side,
             )
 
@@ -392,6 +451,7 @@ class CorrectedGibbsModel(GibbsModel):
             )
         else:
             x = self.normalize_composition(samples)
+            reference_temperature = self._reference_temperature(temperature)
             reference = self.reference_model.gibbs_energy(
                 x.detach().cpu().numpy(),
                 reference_temperature,

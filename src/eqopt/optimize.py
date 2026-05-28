@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from typing import Mapping, Sequence
-
 import torch
 from torch import Tensor
 import torch.nn.functional as F
 
-from .models import SolidSolutionModel, GibbsModel
-from .utilities import as_float_tensor, R, simplex_samples_dirichlet
+from .models import RedlichKisterModel, GibbsModel
+from .utilities import as_float_tensor, R
 from .tdb_reference import EquilibriumCompositions, PhaseCompositions
 
 
@@ -57,65 +56,86 @@ def solve_chemical_potential(
     return torch.linalg.solve(lhs, rhs)
 
 
-def phase_equilibrium_loss(
+def phase_equilibrium_loss_parts(
     phases: Mapping[str, GibbsModel],
     equilibria: Sequence[EquilibriumCompositions],
     *,
-    samples: Tensor | None = None,
-    n_samples: int = 256,
+    n_samples: int = 128,
     tau: float = 1.0,
     stable_weight: float = 1.0,
     unstable_weight: float = 1.0,
     regularization_weight: float = 0.0,
-) -> Tensor:
-    """Driving-force loss from observed phase compositions.
+) -> dict[str, Tensor]:
+    """Return named loss contributions for phase equilibrium.
 
-    Observed phases are penalized toward Phi / RT = 0. All supplied phases are
-    also penalized when their soft-min grand potential drops below zero.
+    Observed phases are penalized toward Phi / RT = 0.
+    Unstable phases are penalized when their Phi drops below zero.
     """
     first_phase = next(iter(phases.values()))
-    if samples is None:
-        samples = simplex_samples_dirichlet(
-            first_phase.n_components,
-            n_samples_each_side=n_samples,
-            device=first_phase.device,
-            dtype=first_phase.dtype,
-        )
+    stable_total = torch.zeros((), device=first_phase.device, dtype=first_phase.dtype)
+    unstable_total = torch.zeros((), device=first_phase.device, dtype=first_phase.dtype)
+    regularization = torch.zeros((), device=first_phase.device, dtype=first_phase.dtype)
 
-    total = torch.zeros((), device=first_phase.device, dtype=first_phase.dtype)
     for eq in equilibria:
-        temperature = eq.temperature
-        observed = eq.phases
         temperature = as_float_tensor(
-            temperature, device=first_phase.device, dtype=first_phase.dtype
+            eq.temperature, device=first_phase.device, dtype=first_phase.dtype
         )
         rt = R * temperature
-        mu = solve_chemical_potential(phases, observed, temperature)
+
+        mu = solve_chemical_potential(phases, eq.phases, temperature)
         phi_by_name = {
-            name: phase.grand_potential(mu.flatten(), temperature, samples, tau=tau)
+            name: phase.grand_potential(
+                mu.flatten(),
+                temperature,
+                tau=tau,
+                n_samples_each_side=n_samples,
+            )
             for name, phase in phases.items()
         }
 
-        stable_terms = []
-        for item in observed:
-            stable_terms.append((phi_by_name[phase_name(item)] / rt).square())
-        if stable_terms:
-            total = total + stable_weight * torch.stack(stable_terms).sum()
+        observed_phases = [phase_name(item) for item in eq.phases]
 
-        unstable_terms = [
-            F.relu(-phi / rt) for phi in phi_by_name.values()
+        stable_losses = [
+            (phi_by_name[phase_name] / rt).square() for phase_name in observed_phases
         ]
-        if unstable_terms:
-            total = total + unstable_weight * torch.stack(unstable_terms).sum()
-        
+        unstable_losses = [
+            F.relu(-phi / rt) for phi in phi_by_name.values()
+            #if phase_name not in observed_phases
+            # even though we already penalized stable phase, we add it to unstable losses
+        ]
+
+        if stable_losses:
+            stable_total = stable_total + stable_weight * torch.stack(stable_losses).sum()
+        if unstable_losses:
+            unstable_total = unstable_total + unstable_weight * torch.stack(unstable_losses).sum()
+
     if regularization_weight:
-        reg = sum(
-            (parameter.square().mean() for phase in phases.values() for parameter in phase.parameters()),
-            torch.zeros((), device=first_phase.device, dtype=first_phase.dtype),
-        )
-        total = total + regularization_weight * reg
-    
-    return total / max(len(equilibria), 1)
+        parameters = [
+            parameter
+            for phase in phases.values()
+            for parameter in phase.parameters()
+            if parameter.requires_grad
+        ]
+        if parameters:
+            squared_sum = sum(
+                (parameter.square().sum() for parameter in parameters),
+                torch.zeros((), device=first_phase.device, dtype=first_phase.dtype),
+            )
+            n_parameters = sum(parameter.numel() for parameter in parameters)
+            regularization = regularization_weight * squared_sum / n_parameters
+
+    normalizer = max(len(equilibria), 1)
+    stable_total = stable_total / normalizer
+    unstable_total = unstable_total / normalizer
+    regularization = regularization / normalizer
+    total = stable_total + unstable_total + regularization
+
+    return {
+        "stable": stable_total,
+        "unstable": unstable_total,
+        "regularization": regularization,
+        "total": total,
+    }
 
 
 def optimize_thermodynamic_parameters(
@@ -124,7 +144,7 @@ def optimize_thermodynamic_parameters(
     *,
     steps: int = 1000,
     lr: float = 1.0e-3,
-    n_samples: int = 256,
+    n_samples: int = 128,
     tau: float = 1.0,
     stable_weight: float = 1.0,
     unstable_weight: float = 1.0,
@@ -133,52 +153,103 @@ def optimize_thermodynamic_parameters(
     print_every: int = 20,
     loss_threshold: float | None = None,
 ) -> list[float]:
-    """Optimize model parameters against observed phase compositions."""
+    """Optimize model parameters against observed phase compositions.
+
+    Parameters
+    ----------
+    steps: int
+        maximal number of optimization steps
+    lr: float
+        learning rate
+    n_samples: int
+        sample density of degrees of freedome
+    tau: float
+        softmin parameter, the smaller tau, the more accurate min
+    stable_weight: float
+        weights for observed phases
+    unstable_weight: float
+        weights for unstable phases (ReLU loss)
+    regularization_weight: float
+        weights for regularization loss
+    """
+    from rich.console import Console
+    console = Console()
+    console.rule('PARAMETERS')
+    console.print(f'steps = {steps}')
+    if loss_threshold is not None:
+        console.print(f'loss threshold = {loss_threshold}')
+    console.print(f'lr = {lr}')
+    console.print(f'sampling density = {n_samples}')
+    console.print(f'tau (softmin) = {tau}')
+    console.print(f'stable weights = {stable_weight}')
+    console.print(f'unstable weights = {unstable_weight}')
+    console.print(f'regularization weights = {regularization_weight}')
+    console.print(f'optimizer = {optimizer_cls}')
+    
     parameters = [parameter for phase in phases.values() for parameter in phase.parameters()]
     if not parameters:
         raise ValueError("No trainable parameters found in the supplied phases.")
+    
+    console.rule('PHASES')
+    for phase_name, model in phases.items():
+        _np = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        console.print(f'{phase_name:<20s} ({_np:d} parameters)')
+
+    console.rule('EQUILIBRIA')
+    for ieq, eq in enumerate(equilibria):
+        console.print(f'{ieq:3d}) {eq}')
+    
     optimizer = optimizer_cls(parameters, lr=lr)
-    first_phase = next(iter(phases.values()))
-    samples = simplex_samples_dirichlet(
-        first_phase.n_components,
-        n_samples_each_side=n_samples,
-        device=first_phase.device,
-        dtype=first_phase.dtype,
-    )
 
     history: list[float] = []
+    console.rule('OPTIMIZE')
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
-        loss = phase_equilibrium_loss(
+        loss_parts = phase_equilibrium_loss_parts(
             phases,
             equilibria,
-            samples=samples,
+            n_samples=n_samples,
             tau=tau,
             stable_weight=stable_weight,
             unstable_weight=unstable_weight,
             regularization_weight=regularization_weight,
         )
+        loss = loss_parts["total"]
         loss.backward()
         optimizer.step()
         history.append(float(loss.detach().cpu()))
+        
         if print_every and (len(history) == 1 or len(history) % print_every == 0):
-            print(f"step {len(history):>6d}/{steps}: loss={history[-1]:.6g}")
+            stable_loss = float(loss_parts["stable"].detach().cpu())
+            unstable_loss = float(loss_parts["unstable"].detach().cpu())
+            regularization_loss = float(loss_parts["regularization"].detach().cpu())
+            console.print(
+                f"step {len(history):>6d}/{steps}: "
+                f"loss={history[-1]:10.2e}, "
+                f"stable={stable_loss:10.2e}, "
+                f"unstable={unstable_loss:10.2e}, "
+                f"regularization={regularization_loss:10.2e}"
+            )
         if loss_threshold is not None and history[-1] <= loss_threshold:
             if print_every:
-                print(
+                console.print(
+                    "\n"
                     f"stopping early at step {len(history)}/{steps}: "
-                    f"loss={history[-1]:.6g} <= threshold={loss_threshold:.6g}"
+                    f"loss={history[-1]:.2e} <= threshold={loss_threshold:.2e}"
                 )
             break
-
+    
+    console.print(f"initial loss: {history[0]:.2f}")
+    console.print(f"final   loss: {history[-1]:.2f}")
+    console.rule('FINISHED')
     return history
 
 
-if __name__ == "__main__":
+def _demo():
     torch.manual_seed(0)
     phases = {
-        "alpha": SolidSolutionModel(2, polynomial_order=1, interaction_order=1, name="alpha"),
-        "beta": SolidSolutionModel(2, polynomial_order=1, interaction_order=1, name="beta"),
+        "alpha": RedlichKisterModel(2, polynomial_order=1, interaction_order=1, name="alpha"),
+        "beta": RedlichKisterModel(2, polynomial_order=1, interaction_order=1, name="beta"),
     }
     data = [
         EquilibriumCompositions(
