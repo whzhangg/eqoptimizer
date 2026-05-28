@@ -111,24 +111,140 @@ class GibbsModel(nn.Module, ABC):
         return -tau * torch.logsumexp(-values / tau, dim=0)
 
 
+class CompoundModel(GibbsModel):
+    """Polynomial Gibbs-energy correction for a stoichiometric compound.
+
+    The compound correction has no composition dependence and no internal
+    degrees of freedom. The physical composition constraint is owned by the
+    pycalphad reference model when this is used inside CorrectedGibbsModel.
+    """
+
+    def __init__(
+        self,
+        n_components: int | None = None,
+        polynomial_order: int = 1,
+        *,
+        name: str | None = None,
+        elements: Sequence[str] | None = None,
+        init_scale: float = 1.0e2,
+        temperature_ref: float = 1000.0,
+        device=None,
+    ) -> None:
+        if elements is None:
+            if n_components is None:
+                raise ValueError(
+                    "CompoundModel requires either n_components or elements."
+                )
+            elements = tuple(f"C{i}" for i in range(n_components))
+        elif n_components is None:
+            n_components = len(elements)
+        if len(elements) != n_components:
+            raise ValueError(
+                f"Expected {n_components} elements, got {len(elements)}."
+            )
+
+        super().__init__(name or "compound", elements)
+        self.polynomial_order = polynomial_order
+        self.temperature_ref = float(temperature_ref)
+        self.coeffs = nn.Parameter(
+            init_scale
+            * torch.randn(polynomial_order + 1, device=device, dtype=TORCH_FLOAT)
+            / (polynomial_order + 1) ** 0.5
+        )
+
+    @classmethod
+    def from_reference_model(
+        cls,
+        reference_model,
+        temperature: float | None = None,
+        **kwargs,
+    ) -> "CompoundModel":
+        """Build a compound correction model from a stoichiometric reference."""
+        if not getattr(reference_model, "is_stoichiometric", False):
+            raise ValueError(
+                f"{reference_model.phase_name} is not a stoichiometric reference model."
+            )
+        return cls(
+            elements=reference_model.elements,
+            **kwargs,
+        )
+
+    def _temperature_powers(self, temperature) -> Tensor:
+        temperature = as_float_tensor(
+            temperature, device=self.device, dtype=self.dtype
+        )
+        powers = torch.arange(
+            self.polynomial_order + 1, device=self.device, dtype=self.dtype
+        )
+        return (temperature[..., None] / self.temperature_ref) ** powers
+
+    def gibbs_energy(self, x, temperature) -> Tensor:
+        input_x = as_float_tensor(x, device=self.device, dtype=self.dtype)
+        single_composition = input_x.ndim == 1
+        gibbs = self._temperature_powers(temperature) @ self.coeffs
+        if single_composition and gibbs.numel() == 1:
+            return gibbs.reshape(())
+        if gibbs.ndim == 0:
+            return gibbs.expand(input_x.shape[0])
+        return gibbs
+
+    def sample_degree_of_freedom(
+        self,
+        temperature,
+        *,
+        n_samples_each_side: int = 16,
+    ) -> Tensor:
+        return torch.empty(
+            (1, 0),
+            device=self.device,
+            dtype=self.dtype,
+        )
+
+    def grand_potential(
+        self,
+        mu,
+        temperature,
+        samples=None,
+        tau: float = 1.0,
+        n_samples_each_side: int = 16,
+    ) -> Tensor:
+        return (self._temperature_powers(temperature) @ self.coeffs).reshape(-1)[0]
+
+    def parameter_report(self) -> str:
+        values = ", ".join(
+            f"c{order}={float(value):.8g}"
+            for order, value in enumerate(self.coeffs.detach().cpu())
+        )
+        return "\n".join([
+            f"CompoundModel(name={self.phase_name!r}, elements={self.elements})",
+            f"temperature_ref = {self.temperature_ref:g}",
+            f"coeffs: {values}",
+        ])
+
+    def print_parameters(self, file=None) -> None:
+        print(self.parameter_report(), file=file or sys.stdout)
+
+
 class RedlichKisterModel(GibbsModel):
     """Substitutional solid solution Gibbs-energy model.
 
     G(x, T) = sum_i x_i G_i(T)
             #+ R T sum_i x_i log(x_i)
             + sum_{i<j} x_i x_j sum_n
-              (a_ij^(n) + b_ij^(n) T / T_ref) (x_i - x_j)^n
+              L_ij^(n)(T) (x_i - x_j)^n
+
+    G_i(T) and L_ij^(n)(T) are both represented as polynomials in T/T_ref.
     """
 
     def __init__(
         self,
         n_components: int,
-        polynomial_order: int = 4,
+        polynomial_order: int = 1,
         interaction_order: int = 0,
         *,
         name: str | None = None,
         elements: Sequence[str] | None = None,
-        init_scale: float = 1.0e3,
+        init_scale: float = 1.0e2,
         temperature_ref: float = 1000.0,
         device=None,
     ) -> None:
@@ -157,19 +273,28 @@ class RedlichKisterModel(GibbsModel):
         self.register_buffer("pair_indices", pair_indices, persistent=False)
         self.interaction_coeffs = nn.Parameter(
             init_scale
-            * torch.randn(pair_indices.shape[0], interaction_order + 1, 2, **kwargs)
-            / (interaction_order + 1) ** 0.5
+            * torch.randn(
+                pair_indices.shape[0],
+                interaction_order + 1,
+                polynomial_order + 1,
+                **kwargs,
+            )
+            / ((interaction_order + 1) * (polynomial_order + 1)) ** 0.5
         )
 
 
-    def pure_component_gibbs(self, temperature) -> Tensor:
+    def _temperature_powers(self, temperature) -> Tensor:
         temperature = as_float_tensor(
             temperature, device=self.device, dtype=self.dtype
         )
         powers = torch.arange(
             self.polynomial_order + 1, device=self.device, dtype=self.dtype
         )
-        t_powers = (temperature[..., None]/self.temperature_ref) ** powers
+        return (temperature[..., None] / self.temperature_ref) ** powers
+
+
+    def pure_component_gibbs(self, temperature) -> Tensor:
+        t_powers = self._temperature_powers(temperature)
         return t_powers @ self.endmember_coeffs.T
 
 
@@ -188,11 +313,11 @@ class RedlichKisterModel(GibbsModel):
         order = torch.arange(
             self.interaction_order + 1, device=self.device, dtype=self.dtype
         )
-        interaction = (
-            self.interaction_coeffs[..., 0]
-            + self.interaction_coeffs[..., 1]
-            * (temperature / self.temperature_ref
-            )[..., None, None]
+        t_powers = self._temperature_powers(temperature)
+        interaction = torch.einsum(
+            "...k,pnk->...pn",
+            t_powers,
+            self.interaction_coeffs,
         )
         rk_terms = (delta[..., None] ** order) * interaction
         excess = (xi * xj * rk_terms.sum(dim=-1)).sum(dim=-1)
@@ -235,8 +360,11 @@ class RedlichKisterModel(GibbsModel):
             pair = f"{self.elements[i]}-{self.elements[j]}"
             lines.append(f"  {pair}:")
             for order, coeffs in enumerate(interactions[pair_index]):
-                a, b = coeffs.tolist()
-                lines.append(f"    n={order}: a={a:.8g}, b={b:.8g}")
+                values = ", ".join(
+                    f"c{power}={float(value):.8g}"
+                    for power, value in enumerate(coeffs)
+                )
+                lines.append(f"    n={order}: {values}")
         return "\n".join(lines)
 
     def print_parameters(self, file=None) -> None:

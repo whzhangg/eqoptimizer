@@ -23,7 +23,7 @@ class EquilibriumCompositions:
     phases: typing.List[PhaseCompositions]
 
     def __repr__(self):
-        s = f'T = {self.temperature:<6d}'
+        s = f'T = {self.temperature:g} '
         s += ' = '.join(str(phase) for phase in self.phases)
         return s
 

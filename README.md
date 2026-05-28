@@ -29,19 +29,24 @@ In these expressions, we use bold letter as external controbl variables that spe
 $$
 x_A = X_A(\mathbf{y})
 $$ 
-where $X_A$ is a function that calculate composition at a coordinate of $\mathbf{y}$. Therefore, we can denote internal parameters collectively as $(\mathbf{y},\mathbf{z})$.
+where $X_A$ is a function that calculate composition at a coordinate of $\mathbf{y}$. The easiest way to make $\mathbf{y}$ and $\mathbf{z}$ competible with each other is to make $\mathbf{z}$ as a function of $\mathbf{y}$, like above. Nonetheless, we can denote internal parameters collectively as $(\mathbf{y},\mathbf{z})$ generally.
 
-From this definition, we optimize $\mathbf{G}_m^{\alpha}$ to reproduce experimental phase boundary. The benefit of separating $\mathbf{G}_m^{\alpha}$ into two contribution is that we are free to design model for $\mathcal{G}_m^{\alpha}$ without concerned with the reference $G_m^{\alpha}$, which can be obtained by free energy calculation from DFT, machine learning potentials (MLIPs) or CALPHAD assessments. For example, if $G_m^{\alpha}$ already provide a rather accurate free energy, we can choose a simple model for $\mathcal{G}_m^{\alpha}$, for example, a Redlich–Kister polynomial. Ignoring $\mathbb{P}$, it can be written as:
+From this definition, we optimize $\mathbf{G}_m^{\alpha}$ to reproduce experimental phase boundary. The benefit of separating $\mathbf{G}_m^{\alpha}$ into two contribution is that we are free to design model for $\mathcal{G}_m^{\alpha}$ without concerned with the reference $G_m^{\alpha}$, which can be obtained by free energy calculation from DFT, machine learning potentials (MLIPs) or CALPHAD assessments. For example, if $G_m^{\alpha}$ already provide a rather accurate free energy, we can choose a simple model for $\mathcal{G}_m^{\alpha}$, for example, a **Redlich–Kister** polynomial. Ignoring $\mathbb{P}$, it can be written as, for a phase:
 $$
-\mathcal{G}_m^{\alpha} (\mathbf{x}^{\alpha},\mathbb{T},\mathbb{D}^{\alpha})
+\mathcal{G}_m^{\mathrm{RF}} (\mathbf{x},\mathbb{T},\mathbb{D})
 = \sum_{i=A}^{N} x_i g_i(T) + \sum_{i=A}^{N}\sum_{j>i} x_i x_j \left[\sum_{n=0}^{v}L_{i,j}^{(n)}(T)\cdot (x_i-x_j)^n\right]
 $$
 The internal degree of freedome is thus just the composition vector of the phase. where both $g_i(T)$ and $L_{i,j}^{(n)}(T)$ can be expressed as polynomial of $T$:
 $$
-g(T) = \sum_{n=0}^{n_{\mathrm{max}}} a_n T^n;\quad 
-L(T) = \sum_{n=0}^{n_{\mathrm{max}}'} b_n T^n 
+g(T) = \sum_{n=0}^{n_{\mathrm{max}}} a_n \left(\frac{T}{T_{\mathrm{ref}}}\right)^n;\quad 
+L(T) = \sum_{n=0}^{n_{\mathrm{max}}'} b_n \left(\frac{T}{T_{\mathrm{ref}}}\right)^n
 $$ 
-typically only $a+bT$ suffice and we can keep relatively low order of interaction parameters. This is just a simple example, but it's also possible to use deep machine learning models that take a crystal structure as input as long as it returns scalar value.
+where $n_{\mathrm{max}}$ is the order of temperature dependence, and we can keep relatively low order of interaction parameters. $T_{\mathrm{ref}}$ is introduced to keep coefficients in similar order of magnitude. For compounds, the simplest correction model is just a polynomial without internal degrees of freedom:
+$$
+\mathcal{G}_m^{\mathrm{comp}}(\mathbb{T},\mathbb{D}) = \sum_{n=0}^{n_{\mathrm{max}}} d_n \left(\frac{T}{T_{\mathrm{ref}}}\right)^n
+$$
+These are just a simple examples of possible free energy correction model, but it's also possible to use deep machine learning models such as neural networks, that take structure of the phase and composition as input as long as it faciliates the calculation of combined Gibbs energy $\mathbf{G}_m^{\alpha}$.
+
 
 ### Loss function
 

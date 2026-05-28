@@ -58,6 +58,7 @@ class PycalphadReferenceModel:
         *,
         pressure: float = PRESSURE,
         device=None,
+        stoichiometric_composition_atol: float = 1.0e-3,
     ) -> None:
         from pycalphad import Database, Model
 
@@ -71,6 +72,7 @@ class PycalphadReferenceModel:
         self.pressure = pressure
         self.dtype = TORCH_FLOAT
         self.device = device
+        self.stoichiometric_composition_atol = stoichiometric_composition_atol
         self.pycalphad_model = Model(database, self.components, phase_name)
         self.phase_solver = PycalphadPhaseSolver(
             database,
@@ -114,6 +116,28 @@ class PycalphadReferenceModel:
             dtype=self.dtype,
             device=self.device,
         ).detach()
+
+    @property
+    def is_stoichiometric(self) -> bool:
+        """Return True when every sublattice has exactly one allowed species."""
+        return all(
+            len(constituents) == 1
+            for constituents in self.database.phases[self.phase_name].constituents
+        )
+
+    def fixed_site_fractions(self) -> np.ndarray:
+        """Return the fixed site-fraction point for a stoichiometric phase."""
+        if not self.is_stoichiometric:
+            raise ValueError(f"{self.phase_name} is not a stoichiometric phase.")
+        return np.ones(len(self.site_fraction_symbols), dtype=float)
+
+    def fixed_composition(self, temperature: float) -> np.ndarray:
+        """Return the fixed composition of a stoichiometric phase."""
+        evaluation = self._calculate_points(
+            self.fixed_site_fractions(),
+            temperature,
+        )
+        return evaluation.x.detach().cpu().numpy().reshape(-1, len(self.elements))[0]
 
     def _calculate_points(
         self,
@@ -185,6 +209,24 @@ class PycalphadReferenceModel:
                 f"Expected {len(self.elements)} composition columns "
                 f"for {self.elements}, got {compositions.shape[-1]}."
             )
+        compositions = compositions / compositions.sum(axis=-1, keepdims=True)
+
+        if self.is_stoichiometric:
+            fixed_x = self.fixed_composition(temperature)
+            if not np.allclose(
+                compositions,
+                fixed_x[None, :],
+                atol=self.stoichiometric_composition_atol,
+            ):
+                raise ValueError(
+                    f"{self.phase_name} is stoichiometric with fixed composition "
+                    f"{dict(zip(self.elements, fixed_x))}; got imposed "
+                    f"composition {compositions.tolist()}. "
+                    "Increase stoichiometric_composition_atol if this is a "
+                    "rounding difference from TDB site ratios."
+                )
+            points = np.tile(self.fixed_site_fractions(), (compositions.shape[0], 1))
+            return self._calculate_points(points, temperature)
 
         if len(self.pycalphad_model.site_ratios) != 1:
             results = [
@@ -283,4 +325,3 @@ def demo() -> None:
         f"{float(sum(p.grad.abs().sum() for p in correction.parameters())):.6f}"
     )
     print(f"pycalphad G0 requires_grad: {sampled.gibbs_energy.requires_grad}")
-

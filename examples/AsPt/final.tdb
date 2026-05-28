@@ -1,0 +1,97 @@
+$ aspt
+$
+$ TDB-file for the thermodynamic assessment of the As-Pt system
+$
+$--------------------------------------------------------------------------
+$ 2011.07.13
+$ 
+$ TDB file created by T.Abe, K.Hashimoto and Y.Sawada
+$
+$ Particle Simulation and Thermodynamics Group, National Institute for 
+$ Materials Science. 1-2-1 Sengen, Tsukuba, Ibaraki 305-0047, Japan
+$ e-mail: abe.taichi @ nims.go.jp
+$ Copyright (C) NIMS 2011
+$
+$--------------------------------------------------------------------------
+$ PARAMETERS ARE TAKEN FROM 
+$ The thermodynamic assessment of the As-Pt system and
+$     the analysis of the Pt/GaAs interfacial reactions,
+$ M.Li, C.Li, F.Wang, W.Zhang, J. All. Comp. 437 (2007) 71-79
+$
+$ ------------------------------------------------------------------------------
+$ Comments
+$ In this TDB, Gas phase is not included. The parameters of the gas phase can
+$ be taken from SSUB database (no data in SGTE-pure database). 
+$                                                                    T.A.
+$ ------------------------------------------------------------------------------
+$
+ ELEMENT /-   ELECTRON_GAS              0.0000E+00  0.0000E+00  0.0000E+00!
+ ELEMENT VA   VACUUM                    0.0000E+00  0.0000E+00  0.0000E+00!
+ ELEMENT AS   RHOMB_A7           7.4922E+01  0.0000E+00  0.0000E+00!
+ ELEMENT PT   FCC_A1                    1.9508E+02  5.7237E+03  4.1631E+01!
+
+$-------------------------------------------------------------------------------
+$ FUNCTIONS FOR PURE AND OTHERS
+$-------------------------------------------------------------------------------
+ 
+ FUNCTION GHSERAS    298.15  -7270.447+122.211069*T-23.3144*T*LN(T)
+     -.00271613*T**2+11600*T**(-1);  1.09000E+03  Y
+      -10454.913+163.457433*T-29.216037*T*LN(T);                       1200 N !
+   
+ FUNCTION GHSERPT    298.15  -7595.631+124.388276*T-24.5526*T*LN(T)
+     -.00248297*T**2-2.0138E-08*T**3+7974*T**(-1);                     1300 Y
+      -9253.174+161.529616*T-30.2527*T*LN(T)+.002321665*T**2
+     -6.56947E-07*T**3-272106*T**(-1);                               2042.1 Y
+      -222518.973+1021.21087*T-136.422689*T*LN(T)+.020501692*T**2
+     -7.60985E-07*T**3+71709819*T**(-1);                               4000 N !
+
+ FUNCTION UN_ASS 298.15 0;                                              300 N !
+
+$------------------------------------------------------------------------------- 
+
+ TYPE_DEFINITION % SEQ *!
+ DEFINE_SYSTEM_DEFAULT SPECIE 2 !
+ DEFAULT_COMMAND DEF_SYS_ELEMENT VA !
+
+$------------------------------------------------------------------------------- 
+$ PARAMETERS FOR LIQUID PHASE
+$-------------------------------------------------------------------------------
+ 
+  PHASE LIQUID %  1  1.0  !
+    CONSTITUENT LIQUID :AS,PT :  !
+
+   PARAMETER G(LIQUID,AS;0)  298.15  +24442.9-22.424679*T+GHSERAS#;    1200  N !
+   PARAMETER G(LIQUID,PT;0)  298.15  +12520.614+115.114727*T-24.5526*T*LN(T)
+       -.00248297*T**2-2.0138E-08*T**3+7974*T**(-1); 
+                                                                         600 Y
+       +19019.913+33.017485*T-12.351404*T*LN(T)-.011543133*T**2
+       +9.30579E-07*T**3-600885*T**(-1);                              2042.1 Y
+       +1404.968+205.861909*T-36.5*T*LN(T);                             4000 N !
+   PARAMETER G(LIQUID,AS,PT;0)  298.15    -123343.99 - 3.1747*T;        6000 N !
+   PARAMETER G(LIQUID,AS,PT;1)  298.15    -4206.64 + 4.2609*T;          6000 N !
+
+$-------------------------------------------------------------------------------
+$ PARAMETERS FOR RHOMB_A7  PHASE
+$-------------------------------------------------------------------------------
+ PHASE RHOMB_A7  %  1  1.0  !
+    CONSTITUENT RHOMB_A7  :AS :  !
+
+   PARAMETER G(RHOMB_A7,AS;0)  298.15  +GHSERAS#;               1200 N !
+
+$------------------------------------------------------------------------------- 
+$ PARAMETERS FOR FCC_A1 PHASE
+$-------------------------------------------------------------------------------
+ PHASE FCC_A1 %  1  1.0  !
+    CONSTITUENT FCC_A1  :PT  :  !
+   PARAMETER G(FCC_A1,PT;0)  298.15  +GHSERPT#;                        4000 N !
+ 
+$-------------------------------------------------------------------------------
+$ PARAMETERS FOR AS2PT
+$------------------------------------------------------------------------------- 
+
+ PHASE AS2PT  %  2  2.0   1.0!
+    CONSTITUENT AS2PT  :AS : PT :  !
+   PARAMETER G(AS2PT,AS:PT;0)  300 -141932 + 20000 + 1.5144*T + 2*T - 3881 - 2.56*T
+   + 2*GHSERAS + GHSERPT;                                      6000 N !
+
+$-------------------------------------------------------------- END OF LINE

@@ -65,6 +65,7 @@ def phase_equilibrium_loss_parts(
     stable_weight: float = 1.0,
     unstable_weight: float = 1.0,
     regularization_weight: float = 0.0,
+    relu_margin: float = 1.0,
 ) -> dict[str, Tensor]:
     """Return named loss contributions for phase equilibrium.
 
@@ -76,6 +77,7 @@ def phase_equilibrium_loss_parts(
     unstable_total = torch.zeros((), device=first_phase.device, dtype=first_phase.dtype)
     regularization = torch.zeros((), device=first_phase.device, dtype=first_phase.dtype)
 
+    phi_at_equilibria = []
     for eq in equilibria:
         temperature = as_float_tensor(
             eq.temperature, device=first_phase.device, dtype=first_phase.dtype
@@ -92,6 +94,9 @@ def phase_equilibrium_loss_parts(
             )
             for name, phase in phases.items()
         }
+        phi_at_equilibria.append({
+            "equilibrium": eq, "phi": phi_by_name, 'mu': mu
+        })
 
         observed_phases = [phase_name(item) for item in eq.phases]
 
@@ -99,7 +104,7 @@ def phase_equilibrium_loss_parts(
             (phi_by_name[phase_name] / rt).square() for phase_name in observed_phases
         ]
         unstable_losses = [
-            F.relu(-phi / rt) for phi in phi_by_name.values()
+            F.relu((relu_margin-phi) / rt) for phi in phi_by_name.values()
             #if phase_name not in observed_phases
             # even though we already penalized stable phase, we add it to unstable losses
         ]
@@ -131,11 +136,57 @@ def phase_equilibrium_loss_parts(
     total = stable_total + unstable_total + regularization
 
     return {
+        "phi_at_equilibria": phi_at_equilibria,
         "stable": stable_total,
         "unstable": unstable_total,
         "regularization": regularization,
         "total": total,
     }
+
+
+def _format_scalar_for_print(value: Tensor | float) -> str:
+    if isinstance(value, Tensor):
+        value = float(value.detach().cpu().reshape(()))
+    return f"{value:10.2e}"
+
+
+def print_phi_at_equilibria(
+    loss_parts: Mapping[str, object],
+    phases: Mapping[str, GibbsModel],
+    *,
+    console=None,
+) -> None:
+    """Print chemical potentials and phase grand potentials for each equilibrium."""
+    if console is None:
+        from rich.console import Console
+        console = Console()
+
+    first_phase = next(iter(phases.values()))
+    elements = first_phase.elements
+
+    for index, entry in enumerate(loss_parts["phi_at_equilibria"]):
+        eq = entry["equilibrium"]
+        mu = entry["mu"].detach().cpu().reshape(-1)
+        phi_by_name = entry["phi"]
+
+        console.print(f"{index:3d}) {str(eq)}")
+
+        if len(elements) == mu.numel():
+            mu_text = ", ".join(
+                f"mu_{element}={float(value):.3e}"
+                for element, value in zip(elements, mu)
+            )
+        else:
+            mu_text = ", ".join(
+                f"mu[{i}]={float(value):.3e}" for i, value in enumerate(mu)
+            )
+        console.print(f"     chemical potential: {mu_text}")
+        observed_phases = [phase_name(item) for item in eq.phases]
+        for _phase_name, phi in phi_by_name.items():
+            if _phase_name in observed_phases:
+                console.print(f"     phi({_phase_name:>10s}) = {_format_scalar_for_print(phi)} <- stable")
+            else:
+                console.print(f"     phi({_phase_name:>10s}) = {_format_scalar_for_print(phi)}")
 
 
 def optimize_thermodynamic_parameters(
@@ -185,6 +236,8 @@ def optimize_thermodynamic_parameters(
     console.print(f'unstable weights = {unstable_weight}')
     console.print(f'regularization weights = {regularization_weight}')
     console.print(f'optimizer = {optimizer_cls}')
+    average_T = sum([eq.temperature for eq in equilibria])/len(equilibria)
+    console.print(f'average temp of equilibria = {average_T}')
     
     parameters = [parameter for phase in phases.values() for parameter in phase.parameters()]
     if not parameters:
@@ -198,7 +251,19 @@ def optimize_thermodynamic_parameters(
     console.rule('EQUILIBRIA')
     for ieq, eq in enumerate(equilibria):
         console.print(f'{ieq:3d}) {eq}')
-    
+    with torch.no_grad():
+        initial_loss_parts = phase_equilibrium_loss_parts(
+            phases,
+            equilibria,
+            n_samples=n_samples,
+            tau=tau,
+            stable_weight=stable_weight,
+            unstable_weight=unstable_weight,
+            regularization_weight=regularization_weight,
+        )
+    console.rule('PHI AT EQUILIBRIA (INITIAL)')
+    print_phi_at_equilibria(initial_loss_parts, phases, console=console)
+
     optimizer = optimizer_cls(parameters, lr=lr)
 
     history: list[float] = []
@@ -238,9 +303,23 @@ def optimize_thermodynamic_parameters(
                     f"loss={history[-1]:.2e} <= threshold={loss_threshold:.2e}"
                 )
             break
-    
-    console.print(f"initial loss: {history[0]:.2f}")
-    console.print(f"final   loss: {history[-1]:.2f}")
+
+    with torch.no_grad():
+        final_loss_parts = phase_equilibrium_loss_parts(
+            phases,
+            equilibria,
+            n_samples=n_samples,
+            tau=tau,
+            stable_weight=stable_weight,
+            unstable_weight=unstable_weight,
+            regularization_weight=regularization_weight,
+        )
+
+    final_loss = float(final_loss_parts["total"].detach().cpu())
+    console.print(f"initial loss: {history[0]:.2e}")
+    console.print(f"final   loss: {final_loss:.2e}")
+    console.rule('PHI AT EQUILIBRIA (FINAL)')
+    print_phi_at_equilibria(final_loss_parts, phases, console=console)
     console.rule('FINISHED')
     return history
 
