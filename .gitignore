@@ -1,5 +1,9 @@
+TODO.md
+experimental
 examples/**/*.ipynb
 examples/**/*.pkl
 examples/**/*.png
 misc
 **/__pycache__
+src/*.py
+src/*.ipynb

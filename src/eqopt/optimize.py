@@ -5,8 +5,9 @@ import torch
 from torch import Tensor
 import torch.nn.functional as F
 
-from .models import RedlichKisterModel, GibbsModel
-from .utilities import as_float_tensor, R
+from .dtype import DEFAULT_DEVICE, DEFAULT_TYPE
+from .models import ThermodynamicModel
+from .utilities import R
 from .tdb_reference import EquilibriumCompositions, PhaseCompositions
 
 
@@ -22,7 +23,7 @@ def phase_x(
 
 
 def solve_chemical_potential(
-    phases: Mapping[str, GibbsModel],
+    phases: Mapping[str, ThermodynamicModel],
     observed: Sequence[PhaseCompositions],
     temperature,
     *,
@@ -30,17 +31,23 @@ def solve_chemical_potential(
 ) -> Tensor:
     """Solve X mu = G for chemical potentials from observed phase vertices."""
     first_phase = next(iter(phases.values()))
+    elements = first_phase.elements
     rows = []
     values = []
     for item in observed:
         phase = phases[phase_name(item)]
-        x = as_float_tensor(
-            phase_x(item, phase.elements),
-            device=phase.device,
-            dtype=phase.dtype,
+        x = torch.as_tensor(
+            phase_x(item, elements),
+            device=DEFAULT_DEVICE,
+            dtype=DEFAULT_TYPE,
         )
         rows.append(x / x.sum())
-        values.append(phase(rows[-1], temperature).reshape(()))
+        values.append(
+            phase.gibbs_energy_per_molar_atom(
+                item.compositions,
+                temperature,
+            ).reshape(())
+        )
 
     x_matrix = torch.stack(rows)
     g_vector = torch.stack(values)
@@ -48,7 +55,9 @@ def solve_chemical_potential(
         return torch.linalg.solve(x_matrix, g_vector)
 
     eye = torch.eye(
-        first_phase.n_components, device=first_phase.device, dtype=first_phase.dtype
+        len(elements),
+        device=DEFAULT_DEVICE,
+        dtype=DEFAULT_TYPE,
     )
     lhs = x_matrix.T @ x_matrix + ridge * eye
     rhs = x_matrix.T @ g_vector
@@ -56,8 +65,56 @@ def solve_chemical_potential(
     return torch.linalg.solve(lhs, rhs)
 
 
+ParameterReference = Mapping[str, Mapping[str, Tensor]]
+
+
+def snapshot_trainable_parameters(
+    phases: Mapping[str, ThermodynamicModel],
+) -> dict[str, dict[str, Tensor]]:
+    """Return detached copies of trainable parameters for displacement priors."""
+    return {
+        phase_name: {
+            parameter_name: parameter.detach().clone()
+            for parameter_name, parameter in phase.named_parameters()
+            if parameter.requires_grad
+        }
+        for phase_name, phase in phases.items()
+    }
+
+
+def parameter_change_l2_sum(
+    phases: Mapping[str, ThermodynamicModel],
+    reference: ParameterReference,
+) -> Tensor:
+    """Return sum_i |w_i - w_i0|^2 over all trainable phase parameters."""
+    total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+    for phase_name, phase in phases.items():
+        if phase_name not in reference:
+            raise ValueError(f"Missing parameter reference for phase {phase_name!r}.")
+        phase_reference = reference[phase_name]
+        for parameter_name, parameter in phase.named_parameters():
+            if not parameter.requires_grad:
+                continue
+            if parameter_name not in phase_reference:
+                raise ValueError(
+                    f"Missing parameter reference for {phase_name}.{parameter_name}."
+                )
+            reference_parameter = phase_reference[parameter_name].to(
+                device=parameter.device,
+                dtype=parameter.dtype,
+            )
+            if reference_parameter.shape != parameter.shape:
+                raise ValueError(
+                    f"Reference shape mismatch for {phase_name}.{parameter_name}: "
+                    f"expected {tuple(parameter.shape)}, got "
+                    f"{tuple(reference_parameter.shape)}."
+                )
+            total = total + (parameter - reference_parameter).square().sum()
+    return total
+
+
 def phase_equilibrium_loss_parts(
-    phases: Mapping[str, GibbsModel],
+    phases: Mapping[str, ThermodynamicModel],
     equilibria: Sequence[EquilibriumCompositions],
     *,
     n_samples: int = 128,
@@ -65,6 +122,7 @@ def phase_equilibrium_loss_parts(
     stable_weight: float = 1.0,
     unstable_weight: float = 1.0,
     regularization_weight: float = 0.0,
+    parameter_reference: ParameterReference | None = None,
     relu_margin: float = 1.0,
 ) -> dict[str, Tensor]:
     """Return named loss contributions for phase equilibrium.
@@ -73,21 +131,27 @@ def phase_equilibrium_loss_parts(
     Unstable phases are penalized when their Phi drops below zero.
     """
     first_phase = next(iter(phases.values()))
-    stable_total = torch.zeros((), device=first_phase.device, dtype=first_phase.dtype)
-    unstable_total = torch.zeros((), device=first_phase.device, dtype=first_phase.dtype)
-    regularization = torch.zeros((), device=first_phase.device, dtype=first_phase.dtype)
+    stable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+    unstable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+    regularization = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
 
     phi_at_equilibria = []
     for eq in equilibria:
-        temperature = as_float_tensor(
-            eq.temperature, device=first_phase.device, dtype=first_phase.dtype
+        temperature = torch.as_tensor(
+            eq.temperature,
+            device=DEFAULT_DEVICE,
+            dtype=DEFAULT_TYPE,
         )
         rt = R * temperature
 
         mu = solve_chemical_potential(phases, eq.phases, temperature)
+        mu_dict = {
+            element: mu[index]
+            for index, element in enumerate(first_phase.elements)
+        }
         phi_by_name = {
-            name: phase.grand_potential(
-                mu.flatten(),
+            name: phase.grand_potential_per_molar_atom(
+                mu_dict,
                 temperature,
                 tau=tau,
                 n_samples_each_side=n_samples,
@@ -115,19 +179,12 @@ def phase_equilibrium_loss_parts(
             unstable_total = unstable_total + unstable_weight * torch.stack(unstable_losses).sum()
 
     if regularization_weight:
-        parameters = [
-            parameter
-            for phase in phases.values()
-            for parameter in phase.parameters()
-            if parameter.requires_grad
-        ]
-        if parameters:
-            squared_sum = sum(
-                (parameter.square().sum() for parameter in parameters),
-                torch.zeros((), device=first_phase.device, dtype=first_phase.dtype),
-            )
-            n_parameters = sum(parameter.numel() for parameter in parameters)
-            regularization = regularization_weight * squared_sum / n_parameters
+        if parameter_reference is None:
+            parameter_reference = snapshot_trainable_parameters(phases)
+        regularization = (
+            regularization_weight
+            * parameter_change_l2_sum(phases, parameter_reference)
+        )
 
     normalizer = max(len(equilibria), 1)
     stable_total = stable_total / normalizer
@@ -152,7 +209,7 @@ def _format_scalar_for_print(value: Tensor | float) -> str:
 
 def print_phi_at_equilibria(
     loss_parts: Mapping[str, object],
-    phases: Mapping[str, GibbsModel],
+    phases: Mapping[str, ThermodynamicModel],
     *,
     console=None,
 ) -> None:
@@ -190,16 +247,16 @@ def print_phi_at_equilibria(
 
 
 def optimize_thermodynamic_parameters(
-    phases: Mapping[str, GibbsModel],
+    phases: Mapping[str, ThermodynamicModel],
     equilibria: Sequence[EquilibriumCompositions],
     *,
     steps: int = 1000,
     lr: float = 1.0e-3,
     n_samples: int = 128,
-    tau: float = 1.0,
+    tau: float = 0.1,
     stable_weight: float = 1.0,
     unstable_weight: float = 1.0,
-    regularization_weight: float = 0.0,
+    regularization_weight: float = None,
     optimizer_cls=torch.optim.Adam,
     print_every: int = 20,
     loss_threshold: float | None = None,
@@ -234,14 +291,21 @@ def optimize_thermodynamic_parameters(
     console.print(f'tau (softmin) = {tau}')
     console.print(f'stable weights = {stable_weight}')
     console.print(f'unstable weights = {unstable_weight}')
-    console.print(f'regularization weights = {regularization_weight}')
-    console.print(f'optimizer = {optimizer_cls}')
     average_T = sum([eq.temperature for eq in equilibria])/len(equilibria)
+    if regularization_weight is None:
+        _sigma = 50
+        _s = 3000
+        regularization_weight = (_sigma/_s/R/average_T)**2 * stable_weight
+        console.print(f'regularization weights = {regularization_weight} (automatically set)')
+    else:
+        console.print(f'regularization weights = {regularization_weight}')
+    console.print(f'optimizer = {optimizer_cls}')
     console.print(f'average temp of equilibria = {average_T}')
     
     parameters = [parameter for phase in phases.values() for parameter in phase.parameters()]
     if not parameters:
         raise ValueError("No trainable parameters found in the supplied phases.")
+    parameter_reference = snapshot_trainable_parameters(phases)
     
     console.rule('PHASES')
     for phase_name, model in phases.items():
@@ -260,6 +324,7 @@ def optimize_thermodynamic_parameters(
             stable_weight=stable_weight,
             unstable_weight=unstable_weight,
             regularization_weight=regularization_weight,
+            parameter_reference=parameter_reference,
         )
     console.rule('PHI AT EQUILIBRIA (INITIAL)')
     print_phi_at_equilibria(initial_loss_parts, phases, console=console)
@@ -278,6 +343,7 @@ def optimize_thermodynamic_parameters(
             stable_weight=stable_weight,
             unstable_weight=unstable_weight,
             regularization_weight=regularization_weight,
+            parameter_reference=parameter_reference,
         )
         loss = loss_parts["total"]
         loss.backward()
@@ -313,6 +379,7 @@ def optimize_thermodynamic_parameters(
             stable_weight=stable_weight,
             unstable_weight=unstable_weight,
             regularization_weight=regularization_weight,
+            parameter_reference=parameter_reference,
         )
 
     final_loss = float(final_loss_parts["total"].detach().cpu())
@@ -322,23 +389,3 @@ def optimize_thermodynamic_parameters(
     print_phi_at_equilibria(final_loss_parts, phases, console=console)
     console.rule('FINISHED')
     return history
-
-
-def _demo():
-    torch.manual_seed(0)
-    phases = {
-        "alpha": RedlichKisterModel(2, polynomial_order=1, interaction_order=1, name="alpha"),
-        "beta": RedlichKisterModel(2, polynomial_order=1, interaction_order=1, name="beta"),
-    }
-    data = [
-        EquilibriumCompositions(
-            temperature=1000.0,
-            phases=[
-                PhaseCompositions("alpha", {"C0": 0.20, "C1": 0.80}),
-                PhaseCompositions("beta", {"C0": 0.75, "C1": 0.25}),
-            ],
-        )
-    ]
-    losses = optimize_thermodynamic_parameters(phases, data, steps=1000, lr=1.0)
-    print(f"initial loss: {losses[0]:.6g}")
-    print(f"final loss:   {losses[-1]:.6g}")
