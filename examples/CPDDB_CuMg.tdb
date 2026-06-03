@@ -1,0 +1,132 @@
+$ Cu-Mg
+$
+$ TDB-file for the thermodynamic assessment of the Cu-Mg system
+$
+$------------------------------------------------------------------------------
+$ 2021.09.14
+$
+$ TDB file created by T.Abe, K.Hashimoto and Y.Sawada
+$
+$ National Institute for Materials Science. 
+$ 1-2-1 Sengen, Tsukuba, Ibaraki 305-0047, Japan
+$ e-mail: abe.taichi @nims.go.jp
+$ Copyright (C) NIMS 2021
+$------------------------------------------------------------------------------
+$ PARAMETERS ARE TAKEN FROM
+$ Thermodynamic modelling of the Cu-Mg-Zn ternary system,
+$ P.Liang, H.J.Seifert, H.L.Lukas, G.Ghosh, G.Effenberg, F.Aldinger,
+$ CALPHAD, 22 (1998), 527-544.
+$------------------------------------------------------------------------------
+$ Comments
+$ Parameters for pure elements are taken from SGTE Unary 5.0.
+$
+$                                                                      T.A.
+$---------------------------------------------------------------------------
+
+ ELEMENT /-   ELECTRON_GAS              0.0000E+00  0.0000E+00  0.0000E+00 !
+ ELEMENT VA   VACUUM                    0.0000E+00  0.0000E+00  0.0000E+00 !
+ ELEMENT CU   FCC_A1                    6.3546E+01  5.0041E+03  3.3150E+01 !
+ ELEMENT MG   HCP_A3                    2.4305E+01  4.9980E+03  3.2671E+01 !
+$        ZN   no data in this TDB
+$------------------------------------------------------------------------------
+$ FUNCTIONS FOR PURE AND OTHERS
+$------------------------------------------------------------------------------
+$ Cu
+$ -------------------------------------
+ FUNCTION GHSERCU  298.15
+ -7770.458+130.485235*T-24.112392*T*LN(T)-2.65684E-3*T**2+0.129223E-6*T**3
+ +52478*T**(-1);  1357.77 Y
+ -13542.026+183.803828*T-31.38*T*LN(T)+364.167E27*T**(-9);  3200.00 N !
+ 
+ FUNCTION GBCCCU 298.15 4017-1.255*T+GHSERCU; 3200 N !
+ 
+ FUNCTION GHCPCU 298.15 600+0.2*T+GHSERCU; 3200 N !
+ 
+ FUNCTION GLIQCU 298.15 12964.735-9.511904*T-584.89E-23*T**7+GHSERCU; 1357.77 Y
+ -46.545+173.881484*T-31.38*T*LN(T); 3200 N !
+
+$ Mg
+$ -------------------------------------
+ FUNCTION GHSERMG  298.15
+ -8367.34+143.675547*T-26.1849782*T*LN(T)+0.4858E-3*T**2-1.393669E-6*T**3
+ +78950*T**(-1);   923.00 Y
+ -14130.185+204.716215*T-34.3088*T*LN(T)+1038.192E25*T**(-9);  3000.00 N !
+ 
+ FUNCTION GLIQMG 298.15 8202.243-8.83693*T-80.176E-21*T**7+GHSERMG; 923 Y
+ -5439.869+195.324057*T-34.3088*T*LN(T);  3000.00 N !
+ 
+ FUNCTION GFCCMG 298.15 2600-0.9*T+GHSERMG; 3000 N !
+ 
+ FUNCTION GBCCMG 298.15 3100-2.1*T+GHSERMG; 3000 N !
+
+
+ FUNCTION  ZERO      298.15  +0;   300 N !
+ FUNCTION  UN_ASS    298.15  +0;   300 N !
+
+$------------------------------------------------------------------------------
+ TYPE_DEFINITION % SEQ *!
+ DEFINE_SYSTEM_DEFAULT ELEMENT 2 !
+ DEFAULT_COMMAND DEF_SYS_ELEMENT VA /- !
+ 
+$------------------------------------------------------------------------------
+$ PARAMETERS FOR LIQUID PHASE
+$------------------------------------------------------------------------------
+ PHASE LIQUID %  1  1.0  !
+   CONSTITUENT LIQUID :CU,MG:  !
+   PARAMETER G(LIQUID,CU;0) 298.15 +GLIQCU;                            6000 N !
+   PARAMETER G(LIQUID,MG;0) 298.15 +GLIQMG;                            6000 N !
+
+   PARAMETER G(LIQUID,CU,MG;0) 298.15  -36962.71 +4.74394*T; 6000 N ! $ 1998Lia
+   PARAMETER G(LIQUID,CU,MG;1) 298.15  -8182.19;             6000 N ! $ 1998Lia
+
+
+$------------------------------------------------------------------------------
+$ PARAMETERS FOR FCC_A1 PHASE
+$------------------------------------------------------------------------------
+ PHASE FCC  %  2 1   1 !
+   CONSTITUENT FCC  : CU,MG : VA :  !
+   PARAMETER G(FCC,CU:VA;0)  298.15  +GHSERCU;                      6000 N !
+   PARAMETER G(FCC,MG:VA;0)  298.15  +GFCCMG;                       6000 N !
+
+   PARAMETER G(FCC,CU,MG:VA;0)  298.15
+     -22059.61 +5.63232*T;                                   6000 N ! $ 1998Lia
+
+$------------------------------------------------------------------------------
+$ PARAMETERS FOR HCP_A3 PHASE
+$------------------------------------------------------------------------------
+ PHASE HCP  %  2 1   0.5 !
+   CONSTITUENT HCP  : CU,MG : VA :  !
+   PARAMETER G(HCP,CU:VA;0)  298.15 +600+0.2*T +GHSERCU;  6000 N ! $ 1998Lia
+   PARAMETER G(HCP,MG:VA;0)  298.15 +GHSERMG;             6000 N !
+
+   PARAMETER G(HCP,CU,MG:VA;0)  298.15  +22500.0 -3.0*T;  6000 N ! $ 1998Lia
+
+$------------------------------------------------------------------------------
+$ PARAMETERS FOR COMPOUNDS
+$------------------------------------------------------------------------------
+ PHASE MG2CU  %  2  1   2 !
+   CONSTITUENT MG2CU  : CU : MG :  !
+   PARAMETER G(MG2CU,CU:MG;0)  298.15 
+     -28620.0 +1.865*T +GHSERCU +2*GHSERMG;                  6000 N ! $ 1998Lia
+
+ PHASE MGCU2  %  2 2   1 !
+   CONSTITUENT MGCU2  : CU,MG : CU,MG :  !
+
+   PARAMETER G(MGCU2,CU:CU;0) 298.15
+      +15000.0 +3*GHSERCU;                                   6000 N ! $ 1998Lia
+   PARAMETER G(MGCU2,CU:MG;0) 298.15
+      -54690.99 +364.73085*T -69.276417*T*LN(T)
+      -5.1925E-4*T**2 +143502*T**(-1) -5.65953E-6*T**(3);    6000 N ! $ 1998Lia
+   PARAMETER G(MGCU2,MG:CU;0) 298.15
+      +104970.96 -16.46448*T +2*GHSERMG +GHSERCU;            6000 N ! $ 1998Lia
+   PARAMETER G(MGCU2,MG:MG;0) 298.15
+      +15000.0 +3*GHSERMG;                                   6000 N ! $ 1998Lia
+
+   PARAMETER G(MGCU2,CU:CU,MG;0) 298.15 +6599.45;        6000 N ! $ 1998Lia
+   PARAMETER G(MGCU2,MG:CU,MG;0) 298.15 +6599.45;        6000 N ! $ 1998Lia
+   PARAMETER G(MGCU2,CU,MG:CU;0) 298.15 +13011.35;       6000 N ! $ 1998Lia
+   PARAMETER G(MGCU2,CU,MG:MG;0) 298.15 +13011.35;       6000 N ! $ 1998Lia
+
+
+
+$end

@@ -15,10 +15,12 @@ def scalar_temperature(temperature) -> Tensor:
 
 
 def get_tensor_mu(mu_dict: Mapping[str, float | Tensor], elements: Sequence[str]) -> Tensor:
-    return torch.as_tensor(
-        [mu_dict[ele] for ele in elements],
-        device=DEFAULT_DEVICE,
-        dtype=DEFAULT_TYPE,
+    return torch.stack(
+        [
+            torch.as_tensor(mu_dict[ele], device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+            for ele in elements
+        ],
+        dim=0,
     )
 
 

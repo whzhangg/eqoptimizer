@@ -1,0 +1,122 @@
+$ Ru-Si
+$
+$ TDB-file for the thermodynamic assessment of the Ru-Si system
+$
+$------------------------------------------------------------------------------
+$ 2017.9.1
+$ 
+$ TDB file created by T.Abe, K.Hashimoto and Y.Sawada
+$
+$ Thermodynamics Modeling Group , National Institute for 
+$ Materials Science. 1-2-1 Sengen, Tsukuba, Ibaraki 305-0047, Japan
+$ e-mail: abe.taichi @nims.go.jp
+$ Copyright (C) NIMS 2017
+$
+$ PARAMETERS ARE TAKEN FROM
+$ Thermodynamic assessment of the Ru-Si and Os-Si systems
+$ Y.Q.Liu, G.Shao, K.P.Homewood, J.Alloy.Compd., 320 (2001) 72-79.
+$------------------------------------------------------------------------------
+$ Comments
+$ Gibbs energy of Ru2Si3 phase is separated at 620K. At 620K, however, there is
+$ a gap of 18J/mol between the low and high temp. functions. Since no physical
+$ reasons are given for 620K, we modified it to 618.062K so that the gap 
+$ becomes negligibly small as 0.00159J/mol.
+$ 
+$ Lattice stability is taken from Unary5.0.
+$                                                                    T.A.
+$------------------------------------------------------------------------------
+ ELEMENT /-   ELECTRON_GAS              0.0000E+00  0.0000E+00  0.0000E+00!
+ ELEMENT VA   VACUUM                    0.0000E+00  0.0000E+00  0.0000E+00!
+ ELEMENT RU   HCP_A3                    1.0107E+02  4.6024E+03  2.8535E+01 !
+ ELEMENT SI   DIAMOND_A4                2.8085E+01  3.2175E+03  1.8820E+01 !
+ 
+$------------------------------------------------------------------------------
+$ FUNCTIONS FOR PURE AND OTHERS
+$------------------------------------------------------------------------------
+$RU
+ FUNCTION GHSERRU  298.15
+  -7561.873+127.866233*T-22.9143287*T*LN(T)-4.062566E-3*T**2+0.17641E-6*T**3
+  +56377*T**(-1);  1500.00 Y
+  -59448.103+489.516214*T-72.3241219*T*LN(T)+18.726245E-3*T**2-1.952433E-6*T**3
+  +11063885*T**(-1);  2607.00 Y
+  -38588773.031+168610.517401*T-21329.7050475*T*LN(T)+5221.638997E-3*T**2
+  -240.245985E-6*T**3+1308.2992629E7*T**(-1);  2740.00 Y
+  -55768.304+364.482314*T-51.8816*T*LN(T);  4500.00 N !
+
+ FUNCTION GLIQRU   298.15
+  +19918.743+119.467485*T-22.9143287*T*LN(T)-4.062566E-3*T**2+0.17641E-6*T**3
+  +56377*T**(-1);   800.00 Y
+  +50827.232-179.818561*T+19.539341*T*LN(T)-26.524167E-3*T**2+1.667839E-6*T**3
+  -3861125*T**(-1);  2607.00 Y
+  -17161.807+349.673561*T-51.8816*T*LN(T);  4500.00 N !
+
+$SI
+ FUNCTION GHSERSI  298.15
+  -8162.609+137.236859*T-22.8317533*T*LN(T)-1.912904E-3*T**2-0.003552E-6*T**3
+  +176667*T**(-1);  1687.00 Y
+  -9457.642+167.281367*T-27.196*T*LN(T)-420.369E28*T**(-9);  3600.00 N !
+ 
+ FUNCTION GLIQSI 298.15 +50696.36-30.099439*T+209.307E-23*T**7+GHSERSI; 1687 Y
+  +40370.523+137.722298*T-27.196*T*LN(T);  3600.00 N !
+ 
+ FUNCTION GHCPSI 298.15 +49200-20.8*T+GHSERSI; 3600 N !
+
+$------------------------------------------------------------------------------
+ TYPE_DEFINITION % SEQ *!
+ DEFINE_SYSTEM_DEFAULT ELEMENT 2 !
+ DEFAULT_COMMAND DEF_SYS_ELEMENT VA /- !
+
+$------------------------------------------------------------------------------
+$ PARAMETERS FOR LIQUID PHASE
+$------------------------------------------------------------------------------
+ PHASE LIQUID  %  1  1.0  !
+   CONSTITUENT LIQUID  :RU,SI :  !
+  PARAMETER G(LIQUID,RU;0)    298.15  +GLIQRU;            4500 N !
+  PARAMETER G(LIQUID,SI;0)    298.15  +GLIQSI;            3600 N !
+  PARAMETER G(LIQUID,RU,SI;0) 298.15  -127858-27.620*T;   6000 N !
+  PARAMETER G(LIQUID,RU,SI;1) 298.15  +59628-23.850*T;    6000 N !
+  PARAMETER G(LIQUID,RU,SI;2) 298.15  +50985;             6000 N !
+
+$------------------------------------------------------------------------------
+$ FUNCTIONS FOR HCP_A3
+$------------------------------------------------------------------------------
+ PHASE HCP  %  1 1.0 !
+   CONSTITUENT HCP  :RU,SI :  !
+  PARAMETER G(HCP,RU;0)    298.15  +GHSERRU;         4500 N !
+  PARAMETER G(HCP,SI;0)    298.15  +GHCPSI;          3600 N !
+  PARAMETER G(HCP,RU,SI;0) 298.15  -121500+15.002*T; 6000 N !
+
+$------------------------------------------------------------------------------
+$ PARAMETERS FOR DIAMOND_A4 PHASE
+$------------------------------------------------------------------------------
+ PHASE SI  %  1  1.0  !
+   CONSTITUENT SI  :SI :  !
+  PARAMETER G(SI,SI;0)  298.15  +GHSERSI;  3600 N !
+
+$------------------------------------------------------------------------------
+$ PARAMETERS FOR COMPOUNDS
+$------------------------------------------------------------------------------
+ PHASE RU2SI3 % 2  0.4  0.6  !
+   CONSTITUENT RU2SI3 :RU :SI : !
+  PARAMETER G(RU2SI3,RU:SI;0) 298.15   -47969-24.002*T+1.529*T*LN(T)
+   +1.026E-3*T**2-81094*T**(-1)+0.4*GHSERRU+0.6*GHSERSI;                618.062 Y
+   -45010-101.091*T+13.745*T*LN(T)-4.440E-3*T**2-1161172*T**(-1)
+   +0.4*GHSERRU+0.6*GHSERSI;                                          6000 N !
+
+ PHASE RUSI % 2  0.5  0.5  !
+   CONSTITUENT RUSI :RU :SI : !
+  PARAMETER G(RUSI,RU:SI;0) 298.15   -55276-17.892*T+2.205*T*LN(T)
+    -6.122E-5*T**2-78350*T**(-1)+0.5*GHSERRU+0.5*GHSERSI;             6000 N !
+
+ PHASE RU4SI3 % 2  0.5714285714285714  0.4285714285714286  !
+   CONSTITUENT RU4SI3 :RU :SI : !
+  PARAMETER G(RU4SI3,RU:SI;0) 298.15   
+   -57561+3.639*T+0.5714285714285714*GHSERRU+0.4285714285714286*GHSERSI;                        6000 N !
+
+ PHASE RU2SI % 2  0.6666666667  0.3333333333  !
+   CONSTITUENT RU2SI :RU :SI : !
+  PARAMETER G(RU2SI,RU:SI;0) 298.15   
+   -38700-1.178*T+0.666666667*GHSERRU+0.3333333333*GHSERSI;                        6000 N !
+
+$------------------------------------------------------------------------------
+$END OF LINE

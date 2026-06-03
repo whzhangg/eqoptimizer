@@ -1,6 +1,9 @@
 import torch
 from torch import nn
 from typing import Sequence
+from pathlib import Path
+import re
+import numpy as np
 
 from ..dtype import DEFAULT_DEVICE, DEFAULT_TYPE
 from ..utilities import R, multi_simplex_samples_dirichlet
@@ -44,13 +47,17 @@ CEFEnergyTerm = EndMemberTerm | PairExcessTerm | TernaryExcessTerm
 
 class TempPolynomial(nn.Module):
     def __init__(self, 
-        parameters: Sequence[float], 
+        input_parameters: Sequence[float], 
         temperature_ref: float = 1000.0
     ):
         super().__init__()
-        self.coeffs = nn.Parameter(
-            torch.as_tensor(parameters, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+        input_parameters = torch.as_tensor(
+            input_parameters, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+        tpower = temperature_powers(
+            1.0, len(input_parameters)-1, temperature_ref
         )
+
+        self.coeffs = nn.Parameter(input_parameters / tpower)
         self.temperature_ref = temperature_ref
 
 
@@ -89,6 +96,11 @@ class CEF(ThermodynamicModel):
     cef_beta2 = 0.999
     cef_eps = 1.0e-8
     cef_penaltyweight = 1e6
+    cef_langevin_steps = 64
+    cef_langevin_step_size = 1.0e-4
+    cef_langevin_noise_scale = 0.1
+    cef_langevin_anneal = 0.98
+    cef_langevin_collect_every = 8
     def __init__(self, 
         components_on_sublattices: Sequence[Sequence[str]],
         sublattice_multiplicities: Sequence[float],
@@ -225,6 +237,68 @@ class CEF(ThermodynamicModel):
         return torch.cat(parts, dim=-1)
 
 
+    def _internal_dof_from_reduced_logits(
+        self,
+        reduced_logits: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return site fractions from logits with one reference per sublattice."""
+        reduced_logits = torch.as_tensor(
+            reduced_logits,
+            device=DEFAULT_DEVICE,
+            dtype=DEFAULT_TYPE,
+        )
+        parts = []
+        column_start = 0
+        for n_components in self.ncomp_for_each_sublattice:
+            if n_components == 1:
+                parts.append(
+                    torch.ones(
+                        (*reduced_logits.shape[:-1], 1),
+                        device=reduced_logits.device,
+                        dtype=reduced_logits.dtype,
+                    )
+                )
+                continue
+            column_stop = column_start + n_components - 1
+            sublattice_logits = reduced_logits[..., column_start:column_stop]
+            reference = torch.zeros(
+                (*reduced_logits.shape[:-1], 1),
+                device=reduced_logits.device,
+                dtype=reduced_logits.dtype,
+            )
+            parts.append(
+                torch.softmax(
+                    torch.cat([sublattice_logits, reference], dim=-1),
+                    dim=-1,
+                )
+            )
+            column_start = column_stop
+        return torch.cat(parts, dim=-1)
+
+
+    def _reduced_logits_from_internal_dof(self, y: torch.Tensor) -> torch.Tensor:
+        """Return reduced logits whose reference component is last per sublattice."""
+        y = torch.as_tensor(y, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+        parts = []
+        column_start = 0
+        for n_components in self.ncomp_for_each_sublattice:
+            column_stop = column_start + n_components
+            if n_components > 1:
+                sublattice_y = y[..., column_start:column_stop].clamp_min(1.0e-12)
+                parts.append(
+                    sublattice_y[..., :-1].log()
+                    - sublattice_y[..., -1:].log()
+                )
+            column_start = column_stop
+        if not parts:
+            return torch.empty(
+                (*y.shape[:-1], 0),
+                device=y.device,
+                dtype=y.dtype,
+            )
+        return torch.cat(parts, dim=-1)
+
+
     def _composition_from_internal_dof(self, y: torch.Tensor) -> torch.Tensor:
         amounts = self.get_amount_of_elements_from_y(y)
         return amounts / amounts.sum(dim=-1, keepdim=True).clamp_min(1.0e-12)
@@ -305,6 +379,16 @@ class CEF(ThermodynamicModel):
             )
             initial_parts.append(sublattice_y)
         return torch.cat(initial_parts, dim=-1).clamp_min(1.0e-12).log()
+
+
+    def _reduced_initial_logits_from_composition(
+        self,
+        target_x: torch.Tensor,
+    ) -> torch.Tensor:
+        full_logits = self._initial_logits_from_composition(target_x)
+        return self._reduced_logits_from_internal_dof(
+            self._internal_dof_from_logits(full_logits)
+        )
     
 
     def _gibbs_energy_from_internal_dof(self, y: torch.Tensor, temperature: float):
@@ -380,7 +464,7 @@ class CEF(ThermodynamicModel):
     def gibbs_energy_per_molar_atom(self, comp, temperature):
         temperature = scalar_temperature(temperature)
         target_x = normalize_and_order_composition(comp, self.elements)
-
+        
         if self._is_fixed_stoichiometry():
             y = self._fixed_internal_dof(target_x.shape[:-1])
             fixed_x = self._composition_from_internal_dof(y)
@@ -402,6 +486,11 @@ class CEF(ThermodynamicModel):
                 temperature,
             )
 
+        return self._solve_constrained_gibbs_scipy(target_x, temperature)
+
+
+    def _solve_constrained_gibbs_penalty_minimization(self, target_x, temperature: torch.Tensor):
+        """constrainted minimization using penalty"""
         logits = self._initial_logits_from_composition(target_x)
 
         def objective(current_logits: torch.Tensor) -> torch.Tensor:
@@ -414,33 +503,158 @@ class CEF(ThermodynamicModel):
         first_moment = torch.zeros_like(logits)
         second_moment = torch.zeros_like(logits)
 
-        for iteration in range(1, self.cef_max_iter + 1):
-            logits = logits.detach().requires_grad_(True)
-            value = objective(logits)
-            grad = torch.autograd.grad(value.sum(), logits)[0]
-            first_moment = (
-                self.cef_beta1 * first_moment
-                + (1.0 - self.cef_beta1) * grad
-            )
-            second_moment = (
-                self.cef_beta2 * second_moment
-                + (1.0 - self.cef_beta2) * grad.square()
-            )
-            first_unbiased = first_moment / (1.0 - self.cef_beta1**iteration)
-            second_unbiased = second_moment / (1.0 - self.cef_beta2**iteration)
-            step = (
-                self.cef_learning_rate
-                * first_unbiased
-                / (second_unbiased.sqrt() + self.cef_eps)
-            )
-            logits_next = logits - step
-            if torch.max(torch.abs(step)).item() < self.cef_tol:
+        with torch.enable_grad():
+            for iteration in range(1, self.cef_max_iter + 1):
+                logits = logits.detach().requires_grad_(True)
+                value = objective(logits)
+                grad = torch.autograd.grad(value.sum(), logits)[0]
+                first_moment = (
+                    self.cef_beta1 * first_moment
+                    + (1.0 - self.cef_beta1) * grad
+                )
+                second_moment = (
+                    self.cef_beta2 * second_moment
+                    + (1.0 - self.cef_beta2) * grad.square()
+                )
+                first_unbiased = first_moment / (1.0 - self.cef_beta1**iteration)
+                second_unbiased = second_moment / (1.0 - self.cef_beta2**iteration)
+                step = (
+                    self.cef_learning_rate
+                    * first_unbiased
+                    / (second_unbiased.sqrt() + self.cef_eps)
+                )
+                logits_next = logits - step
+                if torch.max(torch.abs(step)).item() < self.cef_tol:
+                    logits = logits_next.detach()
+                    break
                 logits = logits_next.detach()
-                break
-            logits = logits_next.detach()
 
         y = self._internal_dof_from_logits(logits)
         return self._gibbs_energy_per_molar_atom_from_internal_dof(y, temperature)
+    
+
+    def _solve_constrained_gibbs_scipy(self, target_x, temperature: torch.Tensor):
+        """constrained minimization"""
+        from scipy.optimize import minimize
+
+        target_x = torch.as_tensor(target_x, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+        if target_x.ndim < 1 or target_x.shape[-1] != len(self.elements):
+            raise ValueError(
+                "SciPy constrained CEF minimization expects compositions with "
+                f"trailing dimension {len(self.elements)}; got shape "
+                f"{tuple(target_x.shape)}."
+            )
+
+        batch_shape = target_x.shape[:-1]
+        flat_target_x = target_x.reshape(-1, len(self.elements))
+        n_constraints = max(len(self.elements) - 1, 0)
+
+        def tensor_from_numpy(
+            logits_np: np.ndarray,
+            *,
+            requires_grad: bool,
+        ) -> torch.Tensor:
+            logits = torch.as_tensor(
+                logits_np,
+                device=DEFAULT_DEVICE,
+                dtype=DEFAULT_TYPE,
+            )
+            logits = logits.detach()
+            if requires_grad:
+                logits = logits.requires_grad_(True)
+            return logits
+
+        def solve_one(single_target_x: torch.Tensor) -> torch.Tensor:
+            single_target_x = single_target_x.detach()
+            initial_logits = self._reduced_initial_logits_from_composition(
+                single_target_x
+            )
+            x0 = initial_logits.detach().cpu().numpy()
+
+            def objective(logits_np: np.ndarray) -> tuple[float, np.ndarray]:
+                with torch.enable_grad():
+                    logits = tensor_from_numpy(logits_np, requires_grad=True)
+                    y = self._internal_dof_from_reduced_logits(logits)
+                    value = self._gibbs_energy_per_molar_atom_from_internal_dof(
+                        y,
+                        temperature,
+                    ).reshape(())
+                    grad = torch.autograd.grad(value, logits)[0]
+                return (
+                    float(value.detach().cpu()),
+                    grad.detach().cpu().numpy(),
+                )
+
+            def constraint_value(logits_np: np.ndarray) -> np.ndarray:
+                if n_constraints == 0:
+                    return np.empty(0, dtype=float)
+                logits = tensor_from_numpy(logits_np, requires_grad=False)
+                y = self._internal_dof_from_reduced_logits(logits)
+                x = self._composition_from_internal_dof(y)
+                residual = (
+                    x[:n_constraints]
+                    - single_target_x[:n_constraints]
+                )
+                return residual.detach().cpu().numpy()
+
+            def constraint_jacobian(logits_np: np.ndarray) -> np.ndarray:
+                if n_constraints == 0:
+                    return np.empty((0, len(logits_np)), dtype=float)
+                with torch.enable_grad():
+                    logits = tensor_from_numpy(logits_np, requires_grad=True)
+                    y = self._internal_dof_from_reduced_logits(logits)
+                    x = self._composition_from_internal_dof(y)
+                    residual = (
+                        x[:n_constraints]
+                        - single_target_x[:n_constraints]
+                    )
+                    rows = []
+                    for index in range(n_constraints):
+                        grad = torch.autograd.grad(
+                            residual[index],
+                            logits,
+                            retain_graph=index < n_constraints - 1,
+                        )[0]
+                        rows.append(grad.detach().cpu().numpy())
+                return np.stack(rows, axis=0)
+
+            constraints = []
+            if n_constraints:
+                constraints.append({
+                    "type": "eq",
+                    "fun": constraint_value,
+                    "jac": constraint_jacobian,
+                })
+
+            result = minimize(
+                objective,
+                x0,
+                method="SLSQP",
+                jac=True,
+                constraints=constraints,
+                options={
+                    "ftol": self.cef_tol,
+                    "maxiter": self.cef_max_iter,
+                    "disp": False,
+                },
+            )
+            logits = tensor_from_numpy(result.x, requires_grad=False)
+            y = self._internal_dof_from_reduced_logits(logits)
+            x = self._composition_from_internal_dof(y)
+            residual = torch.max(torch.abs(x - single_target_x)).item()
+            if not result.success and residual > 10.0 * self.cef_tol:
+                raise RuntimeError(
+                    f"SciPy constrained CEF minimization failed for "
+                    f"{self.phase_name}: {result.message}; max composition "
+                    f"residual={residual:.3e}."
+                )
+            return self._gibbs_energy_per_molar_atom_from_internal_dof(
+                y,
+                temperature,
+            )
+
+        values = [solve_one(single_target_x) for single_target_x in flat_target_x]
+        return torch.stack(values, dim=0).reshape(batch_shape)
 
 
     def get_amount_of_elements_from_y(self, sampled_y):
@@ -473,9 +687,25 @@ class CEF(ThermodynamicModel):
             )
         return amounts
 
+    
     def grand_potential_per_molar_atom(self, mu, temperature, tau = 1, n_samples_each_side = 16):
         temperature = scalar_temperature(temperature)
         mu = get_tensor_mu(mu, self.elements)
+        return self._solve_grand_potential_langevin_softmin(
+            mu,
+            temperature,
+            tau=tau,
+            n_samples_each_side=n_samples_each_side,
+        )
+
+
+    def _solve_grand_potential_softmin(
+        self,
+        mu: torch.Tensor,
+        temperature: torch.Tensor,
+        tau = 1,
+        n_samples_each_side = 16,
+    ):
         sampled_y = multi_simplex_samples_dirichlet(
             self.ncomp_for_each_sublattice, n_samples_each_side
         )
@@ -487,6 +717,210 @@ class CEF(ThermodynamicModel):
         values = values / real_atom_amount.clamp_min(1.0e-12)
         values = values.masked_fill(real_atom_amount <= 1.0e-12, torch.inf)
         return -tau * torch.logsumexp(-values / tau, dim=0)
+
+
+    def _solve_grand_potential_langevin_softmin(
+        self,
+        mu: torch.Tensor,
+        temperature: torch.Tensor,
+        tau = 1,
+        n_samples_each_side = 16,
+        *,
+        n_steps: int | None = None,
+        step_size: float | None = None,
+        noise_scale: float | None = None,
+        anneal: float | None = None,
+        collect_every: int | None = None,
+    ):
+        """Softmin over samples enriched by annealed Langevin moves.
+
+        Candidate generation is detached from the outer graph. The final
+        softmin recomputes grand-potential values on the gathered site
+        fractions, so gradients still flow to thermodynamic parameters and mu.
+        """
+        n_steps = self.cef_langevin_steps if n_steps is None else n_steps
+        step_size = self.cef_langevin_step_size if step_size is None else step_size
+        noise_scale = (
+            self.cef_langevin_noise_scale
+            if noise_scale is None
+            else noise_scale
+        )
+        anneal = self.cef_langevin_anneal if anneal is None else anneal
+        collect_every = (
+            self.cef_langevin_collect_every
+            if collect_every is None
+            else collect_every
+        )
+        collect_every = max(int(collect_every), 1)
+
+        sampled_y = multi_simplex_samples_dirichlet(
+            self.ncomp_for_each_sublattice,
+            n_samples_each_side,
+        )
+        reduced_dim = sum(n - 1 for n in self.ncomp_for_each_sublattice)
+        if reduced_dim == 0:
+            values = self._grand_potential_from_internal_dof(
+                sampled_y,
+                mu,
+                temperature,
+            )
+            return -tau * torch.logsumexp(-values / tau, dim=0)
+
+        logits = self._reduced_logits_from_internal_dof(sampled_y).detach()
+        collected_y = [sampled_y.detach()]
+        sampling_mu = mu.detach()
+
+        with torch.enable_grad():
+            for step in range(int(n_steps)):
+                logits = logits.detach().requires_grad_(True)
+                y = self._internal_dof_from_reduced_logits(logits)
+                values = self._grand_potential_from_internal_dof(
+                    y,
+                    sampling_mu,
+                    temperature,
+                )
+                grad = torch.autograd.grad(values.sum(), logits)[0]
+                grad = torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
+
+                scale = anneal ** step
+                current_step = step_size * scale
+                current_noise = noise_scale * scale**0.5
+                noise = torch.randn_like(logits) * current_noise
+                logits = logits - current_step * grad + noise
+
+                if (step + 1) % collect_every == 0 or step + 1 == n_steps:
+                    collected_y.append(
+                        self._internal_dof_from_reduced_logits(logits).detach()
+                    )
+
+        all_y = torch.cat(collected_y, dim=0)
+        values = self._grand_potential_from_internal_dof(
+            all_y,
+            mu,
+            temperature,
+        )
+        return -tau * torch.logsumexp(-values / tau, dim=0)
+
+
+    def _grand_potential_from_internal_dof(
+        self,
+        y: torch.Tensor,
+        mu: torch.Tensor,
+        temperature: torch.Tensor,
+    ) -> torch.Tensor:
+        amount_of_atoms = self.get_amount_of_elements_from_y(y)
+        values = self._gibbs_energy_from_internal_dof(
+            y,
+            temperature,
+        ) - amount_of_atoms @ mu
+        real_atom_amount = amount_of_atoms.sum(dim=-1)
+        values = values / real_atom_amount.clamp_min(1.0e-12)
+        return values.masked_fill(real_atom_amount <= 1.0e-12, torch.inf)
+
+
+    def _solve_grand_potential_scipy(
+        self,
+        mu: torch.Tensor,
+        temperature: torch.Tensor,
+        *,
+        n_samples_each_side: int = 16,
+    ) -> torch.Tensor:
+        """Minimize grand potential over internal degrees of freedom."""
+        from scipy.optimize import minimize
+
+        mu = torch.as_tensor(mu, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+        reduced_dim = sum(n - 1 for n in self.ncomp_for_each_sublattice)
+
+        if reduced_dim == 0:
+            y = self._fixed_internal_dof(torch.Size())
+            return self._grand_potential_from_internal_dof(y, mu, temperature)
+
+        def tensor_from_numpy(
+            logits_np: np.ndarray,
+            *,
+            requires_grad: bool,
+        ) -> torch.Tensor:
+            logits = torch.as_tensor(
+                logits_np,
+                device=DEFAULT_DEVICE,
+                dtype=DEFAULT_TYPE,
+            )
+            logits = logits.detach()
+            if requires_grad:
+                logits = logits.requires_grad_(True)
+            return logits
+
+        def objective(logits_np: np.ndarray) -> tuple[float, np.ndarray]:
+            with torch.enable_grad():
+                logits = tensor_from_numpy(logits_np, requires_grad=True)
+                y = self._internal_dof_from_reduced_logits(logits)
+                value = self._grand_potential_from_internal_dof(
+                    y,
+                    mu.detach(),
+                    temperature,
+                ).reshape(())
+                grad = torch.autograd.grad(value, logits)[0]
+            return (
+                float(value.detach().cpu()),
+                grad.detach().cpu().numpy(),
+            )
+
+        sampled_y = multi_simplex_samples_dirichlet(
+            self.ncomp_for_each_sublattice,
+            n_samples_each_side,
+        )
+        with torch.no_grad():
+            sampled_values = self._grand_potential_from_internal_dof(
+                sampled_y,
+                mu.detach(),
+                temperature,
+            )
+            n_starts = min(8, sampled_y.shape[0])
+            start_indices = torch.topk(
+                sampled_values,
+                k=n_starts,
+                largest=False,
+            ).indices
+            starts = self._reduced_logits_from_internal_dof(
+                sampled_y[start_indices]
+            )
+            starts = torch.cat([
+                torch.zeros(
+                    (1, reduced_dim),
+                    device=DEFAULT_DEVICE,
+                    dtype=DEFAULT_TYPE,
+                ),
+                starts,
+            ], dim=0)
+
+        best_result = None
+        best_value = float("inf")
+        for start in starts:
+            result = minimize(
+                objective,
+                start.detach().cpu().numpy(),
+                method="BFGS",
+                jac=True,
+                options={
+                    "gtol": self.cef_tol,
+                    "maxiter": self.cef_max_iter,
+                    "disp": False,
+                },
+            )
+            value = float(result.fun)
+            if value < best_value:
+                best_value = value
+                best_result = result
+
+        if best_result is None:
+            raise RuntimeError(
+                f"SciPy grand-potential minimization failed for {self.phase_name}: "
+                "no starts were generated."
+            )
+
+        logits = tensor_from_numpy(best_result.x, requires_grad=False)
+        y = self._internal_dof_from_reduced_logits(logits)
+        return self._grand_potential_from_internal_dof(y, mu, temperature)
 
 
     def get_tdb_str(self):
@@ -527,3 +961,173 @@ class CEF(ThermodynamicModel):
 
         result += ' 10.0  ' + str(term.interaction) + ' ; 6000 N !'
         return result
+
+    
+    @classmethod
+    def from_tdb_and_phasename(cls, tdb_path: str | Path, phase_name: str) -> "CEF":
+        phase_name = phase_name.upper()
+        path = Path(tdb_path)
+        if not path.exists():
+            raise FileNotFoundError(f"TDB file does not exist: {path}")
+        text = path.read_text()
+        text = re.sub(r'^\s*\$.*$', '', text, flags=re.MULTILINE)
+        commands = [
+            command.strip()
+            for command in text.split('!')
+            if command.strip()
+        ]
+
+        multiplicity = None
+        components = None
+        terms: list[CEFEnergyTerm] = []
+        for command in commands:
+            upper_command = command.upper()
+            if upper_command.startswith('PHASE'):
+                tokens = upper_command.split()
+                if len(tokens) >= 4 and tokens[1] == phase_name:
+                    n_sublattices = int(tokens[3])
+                    multiplicity = tuple(
+                        float(value)
+                        for value in tokens[4:4 + n_sublattices]
+                    )
+
+            if upper_command.startswith('CONSTITUENT'):
+                match = re.match(
+                    r'CONSTITUENT\s+(\s*\S+\s*)\s*:(.*):\s*$',
+                    upper_command,
+                    flags=re.IGNORECASE,
+                ) # things in () in pattern is captured by group
+                if match and match.group(1).strip().upper() == phase_name:
+                    components = tuple(
+                        tuple(
+                            component.strip().upper()
+                            for component in sublattice.split(',')
+                            if component.strip()
+                        )
+                        for sublattice in match.group(2).split(':')
+                    )
+
+            if upper_command.startswith('PARAMETER'):
+                term = cls._energy_term_from_tdb_command(upper_command, phase_name)
+                if term is not None:
+                    terms.append(term)
+
+        if multiplicity is None or components is None or not terms:
+            raise ValueError('phase cannot be found or imcomplete')
+
+        return cls(components, multiplicity, terms, name=phase_name)
+
+
+    @classmethod
+    def _energy_term_from_tdb_command(
+        cls,
+        command: str,
+        phase_name: str,
+    ) -> CEFEnergyTerm | None:
+        pattern = (
+            r'PARAMETER\s+G\(\s*'
+            r'([^,\s]+)\s*,\s*'
+            r'(.+?)'
+            r';\s*(\d+)\s*\)\s*'
+            r'[-+0-9.Ee]+\s+'
+            r'(.+?)'
+            r';\s*[-+0-9.Ee]+\s+[YN]\s*$'
+        )
+        match = re.match(pattern, command, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            return None
+        if match.group(1).upper() != phase_name:
+            return None
+
+        site_entries = [
+            entry.strip().upper()
+            for entry in match.group(2).split(':')
+        ]
+        order = int(match.group(3))
+        polynomial = TempPolynomial(cls._parse_tdb_polynomial(match.group(4)))
+
+        mixed_sublattices = [
+            index
+            for index, entry in enumerate(site_entries)
+            if ',' in entry
+        ]
+        if not mixed_sublattices:
+            return EndMemberTerm(
+                conditioners=tuple(
+                    (index, entry)
+                    for index, entry in enumerate(site_entries)
+                ),
+                interaction=polynomial,
+            )
+        if len(mixed_sublattices) != 1:
+            raise ValueError(
+                f"Only one mixed sublattice is supported in restricted CEF "
+                f"TDB import: {command}"
+            )
+
+        mixed_sublattice = mixed_sublattices[0]
+        mixed_components = tuple(
+            component.strip().upper()
+            for component in site_entries[mixed_sublattice].split(',')
+            if component.strip()
+        )
+        conditioners = tuple(
+            (index, entry)
+            for index, entry in enumerate(site_entries)
+            if index != mixed_sublattice
+        )
+        if len(mixed_components) == 2:
+            return PairExcessTerm(
+                sublattice=mixed_sublattice,
+                pair=mixed_components,
+                order=order,
+                conditioners=conditioners,
+                interaction=polynomial,
+            )
+        if len(mixed_components) == 3 and order == 0:
+            return TernaryExcessTerm(
+                sublattice=mixed_sublattice,
+                triplet=mixed_components,
+                conditioners=conditioners,
+                interaction=polynomial,
+            )
+        raise ValueError(
+            f"Unsupported restricted CEF TDB parameter site entry: {command}"
+        )
+
+
+    @staticmethod
+    def _parse_tdb_polynomial(expression: str) -> list[float]:
+        expression = expression.replace(' ', '')
+        if not expression:
+            raise ValueError("Empty polynomial expression.")
+        if expression[0] not in '+-':
+            expression = '+' + expression
+        terms = []
+        term_start = 0
+        for index in range(1, len(expression)):
+            if expression[index] in '+-' and expression[index - 1].upper() != 'E':
+                terms.append(expression[term_start:index])
+                term_start = index
+        terms.append(expression[term_start:])
+        coeffs: dict[int, float] = {}
+        for term in terms:
+            sign = -1.0 if term[0] == '-' else 1.0
+            body = term[1:]
+            if '*T**' in body:
+                coefficient_text, order_text = body.split('*T**', 1)
+                order = int(order_text)
+            elif '*T' in body:
+                coefficient_text = body.split('*T', 1)[0]
+                order = 1
+            elif body == 'T':
+                coefficient_text = '1'
+                order = 1
+            else:
+                coefficient_text = body
+                order = 0
+            coefficient = sign * float(coefficient_text)
+            coeffs[order] = coeffs.get(order, 0.0) + coefficient
+
+        max_order = max(coeffs, default=0)
+        return [coeffs.get(order, 0.0) for order in range(max_order + 1)]

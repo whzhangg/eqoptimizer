@@ -15,6 +15,13 @@ def phase_name(item: PhaseCompositions) -> str:
     return item.name
 
 
+def freeze_model(model: torch.nn.Module) -> torch.nn.Module:
+    """Disable optimization of all parameters in a torch model."""
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    return model
+
+
 def phase_x(
     item: PhaseCompositions,
     elements: Sequence[str],
@@ -149,6 +156,7 @@ def phase_equilibrium_loss_parts(
             element: mu[index]
             for index, element in enumerate(first_phase.elements)
         }
+        #print(mu_dict)
         phi_by_name = {
             name: phase.grand_potential_per_molar_atom(
                 mu_dict,
@@ -168,9 +176,8 @@ def phase_equilibrium_loss_parts(
             (phi_by_name[phase_name] / rt).square() for phase_name in observed_phases
         ]
         unstable_losses = [
-            F.relu((relu_margin-phi) / rt) for phi in phi_by_name.values()
-            #if phase_name not in observed_phases
-            # even though we already penalized stable phase, we add it to unstable losses
+            F.relu((relu_margin - phi) / rt)
+            for phi in phi_by_name.values()
         ]
 
         if stable_losses:
@@ -302,7 +309,12 @@ def optimize_thermodynamic_parameters(
     console.print(f'optimizer = {optimizer_cls}')
     console.print(f'average temp of equilibria = {average_T}')
     
-    parameters = [parameter for phase in phases.values() for parameter in phase.parameters()]
+    parameters = [
+        parameter
+        for phase in phases.values()
+        for parameter in phase.parameters()
+        if parameter.requires_grad
+    ]
     if not parameters:
         raise ValueError("No trainable parameters found in the supplied phases.")
     parameter_reference = snapshot_trainable_parameters(phases)
