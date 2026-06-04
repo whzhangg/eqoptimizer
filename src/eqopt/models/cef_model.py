@@ -1,18 +1,18 @@
 import torch
 from torch import nn
-from typing import Sequence
+from typing import Sequence, Mapping
 from pathlib import Path
 import re
 import numpy as np
-
+import math
 from ..dtype import DEFAULT_DEVICE, DEFAULT_TYPE
 from ..utilities import R, multi_simplex_samples_dirichlet
 from .models_abc import ThermodynamicModel
+from .polynomial import TempPolynomial
 from .shared import (
     get_tensor_mu,
     normalize_and_order_composition,
     scalar_temperature,
-    temperature_powers,
 )
 import dataclasses
 
@@ -45,49 +45,6 @@ class EndMemberTerm:
 CEFEnergyTerm = EndMemberTerm | PairExcessTerm | TernaryExcessTerm
 
 
-class TempPolynomial(nn.Module):
-    def __init__(self, 
-        input_parameters: Sequence[float], 
-        temperature_ref: float = 1000.0
-    ):
-        super().__init__()
-        input_parameters = torch.as_tensor(
-            input_parameters, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
-        tpower = temperature_powers(
-            1.0, len(input_parameters)-1, temperature_ref
-        )
-
-        self.coeffs = nn.Parameter(input_parameters / tpower)
-        self.temperature_ref = temperature_ref
-
-
-    def g(self, temperature) -> torch.Tensor:
-        temperature = scalar_temperature(temperature)
-        return temperature_powers(
-            temperature, len(self.coeffs)-1, self.temperature_ref
-        ) @ self.coeffs
-
-
-    def forward(self, temperature) -> torch.Tensor:
-        return self.g(temperature)
-    
-
-    def __repr__(self) -> str:
-        actual_coeff =  temperature_powers(
-            1.0, len(self.coeffs)-1, self.temperature_ref
-        ) * self.coeffs.detach()
-        parts = []
-        for i, c in enumerate(actual_coeff.detach().cpu().reshape(-1)):
-            coefficient = float(c)
-            if i == 0:
-                parts.append(f'{coefficient:+.8e}')
-            elif i == 1:
-                parts.append(f'{coefficient:+.8e}*T')
-            else:
-                parts.append(f'{coefficient:+.8e}*T**{i}')
-        return ' '.join(parts)
-
-
 class CEF(ThermodynamicModel):
     cef_max_iter = 300
     cef_tol = 1.0e-5
@@ -96,11 +53,6 @@ class CEF(ThermodynamicModel):
     cef_beta2 = 0.999
     cef_eps = 1.0e-8
     cef_penaltyweight = 1e6
-    cef_langevin_steps = 64
-    cef_langevin_step_size = 1.0e-4
-    cef_langevin_noise_scale = 0.1
-    cef_langevin_anneal = 0.98
-    cef_langevin_collect_every = 8
     def __init__(self, 
         components_on_sublattices: Sequence[Sequence[str]],
         sublattice_multiplicities: Sequence[float],
@@ -219,11 +171,6 @@ class CEF(ThermodynamicModel):
                 f"{type(term).__name__} is missing entries for sublattices "
                 f"{missing}."
             )
-
-    def _sample_internal_dof(self, n_samples_each_side: int = 64):
-        return multi_simplex_samples_dirichlet(
-            self.ncomp_for_each_sublattice, n_samples_each_side
-        )
 
 
     def _internal_dof_from_logits(self, logits: torch.Tensor) -> torch.Tensor:
@@ -487,50 +434,6 @@ class CEF(ThermodynamicModel):
             )
 
         return self._solve_constrained_gibbs_scipy(target_x, temperature)
-
-
-    def _solve_constrained_gibbs_penalty_minimization(self, target_x, temperature: torch.Tensor):
-        """constrainted minimization using penalty"""
-        logits = self._initial_logits_from_composition(target_x)
-
-        def objective(current_logits: torch.Tensor) -> torch.Tensor:
-            y = self._internal_dof_from_logits(current_logits)
-            x = self._composition_from_internal_dof(y)
-            gibbs = self._gibbs_energy_per_molar_atom_from_internal_dof(y, temperature)
-            composition_error = ((x - target_x) ** 2).sum(dim=-1)
-            return gibbs + self.cef_penaltyweight * composition_error
-
-        first_moment = torch.zeros_like(logits)
-        second_moment = torch.zeros_like(logits)
-
-        with torch.enable_grad():
-            for iteration in range(1, self.cef_max_iter + 1):
-                logits = logits.detach().requires_grad_(True)
-                value = objective(logits)
-                grad = torch.autograd.grad(value.sum(), logits)[0]
-                first_moment = (
-                    self.cef_beta1 * first_moment
-                    + (1.0 - self.cef_beta1) * grad
-                )
-                second_moment = (
-                    self.cef_beta2 * second_moment
-                    + (1.0 - self.cef_beta2) * grad.square()
-                )
-                first_unbiased = first_moment / (1.0 - self.cef_beta1**iteration)
-                second_unbiased = second_moment / (1.0 - self.cef_beta2**iteration)
-                step = (
-                    self.cef_learning_rate
-                    * first_unbiased
-                    / (second_unbiased.sqrt() + self.cef_eps)
-                )
-                logits_next = logits - step
-                if torch.max(torch.abs(step)).item() < self.cef_tol:
-                    logits = logits_next.detach()
-                    break
-                logits = logits_next.detach()
-
-        y = self._internal_dof_from_logits(logits)
-        return self._gibbs_energy_per_molar_atom_from_internal_dof(y, temperature)
     
 
     def _solve_constrained_gibbs_scipy(self, target_x, temperature: torch.Tensor):
@@ -688,77 +591,37 @@ class CEF(ThermodynamicModel):
         return amounts
 
     
-    def grand_potential_per_molar_atom(self, mu, temperature, tau = 1, n_samples_each_side = 16):
+    def grand_potential_per_molar_atom(self, 
+        mu: Mapping[str, float], 
+        temperature: float, 
+        tau: float | None = None, 
+        *,
+        n_samples_each_side = 64,
+        n_steps: int = 6,
+        delta: float = 0.3,
+        max_step_factor: float = 1.5
+    ):
+        """solve grand potential
+        
+        1) do a sampling according to n_samples_each_side
+        2) for all points, perform exponential gradient descent for k steps
+        3) from the final result, do a softmin
+
+        The descent trajectory is detached from the outer graph. The final
+        softmin recomputes grand-potential values on the refined site fractions
+        so gradients still flow to thermodynamic parameters and mu.
+        """
         temperature = scalar_temperature(temperature)
         mu = get_tensor_mu(mu, self.elements)
-        return self._solve_grand_potential_langevin_softmin(
-            mu,
-            temperature,
-            tau=tau,
-            n_samples_each_side=n_samples_each_side,
-        )
-
-
-    def _solve_grand_potential_softmin(
-        self,
-        mu: torch.Tensor,
-        temperature: torch.Tensor,
-        tau = 1,
-        n_samples_each_side = 16,
-    ):
-        sampled_y = multi_simplex_samples_dirichlet(
-            self.ncomp_for_each_sublattice, n_samples_each_side
-        )
-        amount_of_atoms = self.get_amount_of_elements_from_y(sampled_y)
-        values = self._gibbs_energy_from_internal_dof(
-            sampled_y, temperature
-        ) - amount_of_atoms @ mu
-        real_atom_amount = amount_of_atoms.sum(dim=-1)
-        values = values / real_atom_amount.clamp_min(1.0e-12)
-        values = values.masked_fill(real_atom_amount <= 1.0e-12, torch.inf)
-        return -tau * torch.logsumexp(-values / tau, dim=0)
-
-
-    def _solve_grand_potential_langevin_softmin(
-        self,
-        mu: torch.Tensor,
-        temperature: torch.Tensor,
-        tau = 1,
-        n_samples_each_side = 16,
-        *,
-        n_steps: int | None = None,
-        step_size: float | None = None,
-        noise_scale: float | None = None,
-        anneal: float | None = None,
-        collect_every: int | None = None,
-    ):
-        """Softmin over samples enriched by annealed Langevin moves.
-
-        Candidate generation is detached from the outer graph. The final
-        softmin recomputes grand-potential values on the gathered site
-        fractions, so gradients still flow to thermodynamic parameters and mu.
-        """
-        n_steps = self.cef_langevin_steps if n_steps is None else n_steps
-        step_size = self.cef_langevin_step_size if step_size is None else step_size
-        noise_scale = (
-            self.cef_langevin_noise_scale
-            if noise_scale is None
-            else noise_scale
-        )
-        anneal = self.cef_langevin_anneal if anneal is None else anneal
-        collect_every = (
-            self.cef_langevin_collect_every
-            if collect_every is None
-            else collect_every
-        )
-        collect_every = max(int(collect_every), 1)
-
+        
         sampled_y = multi_simplex_samples_dirichlet(
             self.ncomp_for_each_sublattice,
             n_samples_each_side,
         )
-        reduced_dim = sum(n - 1 for n in self.ncomp_for_each_sublattice)
-        if reduced_dim == 0:
+        if tau is None:
+            tau = 1.0 / math.log(sampled_y.shape[0]) # shape is int
+
+        if int(n_steps) <= 0:
             values = self._grand_potential_from_internal_dof(
                 sampled_y,
                 mu,
@@ -766,40 +629,90 @@ class CEF(ThermodynamicModel):
             )
             return -tau * torch.logsumexp(-values / tau, dim=0)
 
-        logits = self._reduced_logits_from_internal_dof(sampled_y).detach()
-        collected_y = [sampled_y.detach()]
+        y = sampled_y.detach()
         sampling_mu = mu.detach()
+        eta_by_sublattice: list[torch.Tensor | None] = [
+            None for _ in self.ncomp_for_each_sublattice
+        ]
 
         with torch.enable_grad():
-            for step in range(int(n_steps)):
-                logits = logits.detach().requires_grad_(True)
-                y = self._internal_dof_from_reduced_logits(logits)
+            total_rej = 0
+            for _ in range(int(n_steps)):
+                y = y.detach().requires_grad_(True)
                 values = self._grand_potential_from_internal_dof(
                     y,
                     sampling_mu,
                     temperature,
                 )
-                grad = torch.autograd.grad(values.sum(), logits)[0]
-                grad = torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
+                grad_y = torch.autograd.grad(values.sum(), y)[0]
+                grad_y = torch.nan_to_num(
+                    grad_y,
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
 
-                scale = anneal ** step
-                current_step = step_size * scale
-                current_noise = noise_scale * scale**0.5
-                noise = torch.randn_like(logits) * current_noise
-                logits = logits - current_step * grad + noise
+                updated_parts = []
+                column_start = 0
+                for sublattice, n_components in enumerate(self.ncomp_for_each_sublattice):
+                    column_stop = column_start + n_components
+                    w = y[..., column_start:column_stop].detach()
+                    g = grad_y[..., column_start:column_stop].detach()
 
-                if (step + 1) % collect_every == 0 or step + 1 == n_steps:
-                    collected_y.append(
-                        self._internal_dof_from_reduced_logits(logits).detach()
+                    if n_components == 1:
+                        updated_parts.append(w)
+                        column_start = column_stop
+                        continue
+
+                    g_bar = (w * g).sum(dim=-1, keepdim=True)
+                    centered_g = g - g_bar
+                    if eta_by_sublattice[sublattice] is None:
+                        scale = (w * centered_g.abs()).amax(
+                            dim=-1,
+                            keepdim=True,
+                        )
+                        eta_by_sublattice[sublattice] = (
+                            delta / scale.clamp_min(self.cef_eps)
+                        )
+
+                    eta = eta_by_sublattice[sublattice]
+                    proposed = self._exp_gradient_update(w, centered_g, eta)
+                    actual_step = (proposed - w).abs().amax(
+                        dim=-1,
+                        keepdim=True,
                     )
+                    too_large = actual_step > max_step_factor * delta
+                    if torch.any(too_large):
+                        shrink = delta / actual_step.clamp_min(self.cef_eps)
+                        eta = torch.where(too_large, eta * shrink, eta)
+                        proposed = self._exp_gradient_update(w, centered_g, eta)
+                        eta_by_sublattice[sublattice] = eta
+                        total_rej += 1
 
-        all_y = torch.cat(collected_y, dim=0)
+                    updated_parts.append(proposed.detach())
+                    column_start = column_stop
+
+                y = torch.cat(updated_parts, dim=-1)
+
         values = self._grand_potential_from_internal_dof(
-            all_y,
+            y.detach(),
             mu,
             temperature,
         )
         return -tau * torch.logsumexp(-values / tau, dim=0)
+
+
+    def _exp_gradient_update(
+        self,
+        w: torch.Tensor,
+        centered_gradient: torch.Tensor,
+        eta: torch.Tensor,
+    ) -> torch.Tensor:
+        exponent = -eta * centered_gradient
+        exponent = exponent - exponent.amax(dim=-1, keepdim=True)
+        updated = w * torch.exp(exponent)
+        updated = updated.clamp_min(1.0e-12)
+        return updated / updated.sum(dim=-1, keepdim=True).clamp_min(1.0e-12)
 
 
     def _grand_potential_from_internal_dof(
@@ -818,14 +731,35 @@ class CEF(ThermodynamicModel):
         return values.masked_fill(real_atom_amount <= 1.0e-12, torch.inf)
 
 
-    def _solve_grand_potential_scipy(
+    def grand_potential_per_molar_atom_by_scipy(self,
+        mu: Mapping[str, float], 
+        temperature: float, 
+        *,
+        n_samples_each_side = 64
+    ):
+        """solve the grand potential using scipy."""
+        temperature = scalar_temperature(temperature)
+        mu = get_tensor_mu(mu, self.elements)
+        return self._solve_grand_potential_by_scipy(
+            mu, temperature, n_samples_each_side=n_samples_each_side
+        )
+    
+
+    def _solve_grand_potential_by_scipy(
         self,
         mu: torch.Tensor,
         temperature: torch.Tensor,
         *,
-        n_samples_each_side: int = 16,
+        n_samples_each_side: int = 64,
+        n_samples_to_optimize: int = 8
     ) -> torch.Tensor:
-        """Minimize grand potential over internal degrees of freedom."""
+        """
+        Minimize grand potential over internal degrees of freedom.
+        
+        1) make a overall sampling
+        2) select top n_samples to do subsequent minimization BFGS
+        3) return the best result with minimal gibbs energy
+        """
         from scipy.optimize import minimize
 
         mu = torch.as_tensor(mu, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
@@ -875,7 +809,7 @@ class CEF(ThermodynamicModel):
                 mu.detach(),
                 temperature,
             )
-            n_starts = min(8, sampled_y.shape[0])
+            n_starts = min(n_samples_to_optimize, sampled_y.shape[0])
             start_indices = torch.topk(
                 sampled_values,
                 k=n_starts,
@@ -933,35 +867,32 @@ class CEF(ThermodynamicModel):
             [','.join([str(_c) for _c in comps]) for comps in self.components_on_sublattices])
         lines.append(f'constituent {self.phase_name} : {comps} : !')
         for term in self.energy_terms:
-            lines.append(self.get_tdb_str_for_energy_term(term))
+            # TODO: it will be better for each Term to be responsible for this
+            nsublattice = len(self.ncomp_for_each_sublattice)
+            result = f'parameter g({self.phase_name},'
+
+            sites_symbol = {}
+            for sublattice, component in term.conditioners:
+                sites_symbol[sublattice] = component
+
+            if isinstance(term, EndMemberTerm):
+                elements_str = ':'.join([sites_symbol[i] for i in range(nsublattice)])
+                result += elements_str + ';0)'
+
+            if isinstance(term, PairExcessTerm):
+                sites_symbol[term.sublattice] = ",".join(term.pair)
+                elements_str = ':'.join([sites_symbol[i] for i in range(nsublattice)])
+                result += elements_str + f';{term.order})'
+
+            if isinstance(term, TernaryExcessTerm):
+                sites_symbol[term.sublattice] = ",".join(term.triplet)
+                elements_str = ':'.join([sites_symbol[i] for i in range(nsublattice)])
+                result += elements_str + ';0)'
+
+            result += ' 10.0  ' + str(term.interaction.get_expression()) + ' ; 6000 N !'
+            lines.append(result)
         return '\n'.join(lines).upper()
     
-
-    def get_tdb_str_for_energy_term(self, term: CEFEnergyTerm) -> str:
-        nsublattice = len(self.ncomp_for_each_sublattice)
-        result = f'parameter g({self.phase_name},'
-
-        sites_symbol = {}
-        for sublattice, component in term.conditioners:
-            sites_symbol[sublattice] = component
-
-        if isinstance(term, EndMemberTerm):
-            elements_str = ':'.join([sites_symbol[i] for i in range(nsublattice)])
-            result += elements_str + ';0)'
-
-        if isinstance(term, PairExcessTerm):
-            sites_symbol[term.sublattice] = ",".join(term.pair)
-            elements_str = ':'.join([sites_symbol[i] for i in range(nsublattice)])
-            result += elements_str + f';{term.order})'
-
-        if isinstance(term, TernaryExcessTerm):
-            sites_symbol[term.sublattice] = ",".join(term.triplet)
-            elements_str = ':'.join([sites_symbol[i] for i in range(nsublattice)])
-            result += elements_str + ';0)'
-
-        result += ' 10.0  ' + str(term.interaction) + ' ; 6000 N !'
-        return result
-
     
     @classmethod
     def from_tdb_and_phasename(cls, tdb_path: str | Path, phase_name: str) -> "CEF":
@@ -1044,8 +975,8 @@ class CEF(ThermodynamicModel):
             for entry in match.group(2).split(':')
         ]
         order = int(match.group(3))
-        polynomial = TempPolynomial(cls._parse_tdb_polynomial(match.group(4)))
-
+        polynomial = TempPolynomial.from_expression(match.group(4))
+        
         mixed_sublattices = [
             index
             for index, entry in enumerate(site_entries)
@@ -1095,39 +1026,3 @@ class CEF(ThermodynamicModel):
             f"Unsupported restricted CEF TDB parameter site entry: {command}"
         )
 
-
-    @staticmethod
-    def _parse_tdb_polynomial(expression: str) -> list[float]:
-        expression = expression.replace(' ', '')
-        if not expression:
-            raise ValueError("Empty polynomial expression.")
-        if expression[0] not in '+-':
-            expression = '+' + expression
-        terms = []
-        term_start = 0
-        for index in range(1, len(expression)):
-            if expression[index] in '+-' and expression[index - 1].upper() != 'E':
-                terms.append(expression[term_start:index])
-                term_start = index
-        terms.append(expression[term_start:])
-        coeffs: dict[int, float] = {}
-        for term in terms:
-            sign = -1.0 if term[0] == '-' else 1.0
-            body = term[1:]
-            if '*T**' in body:
-                coefficient_text, order_text = body.split('*T**', 1)
-                order = int(order_text)
-            elif '*T' in body:
-                coefficient_text = body.split('*T', 1)[0]
-                order = 1
-            elif body == 'T':
-                coefficient_text = '1'
-                order = 1
-            else:
-                coefficient_text = body
-                order = 0
-            coefficient = sign * float(coefficient_text)
-            coeffs[order] = coeffs.get(order, 0.0) + coefficient
-
-        max_order = max(coeffs, default=0)
-        return [coeffs.get(order, 0.0) for order in range(max_order + 1)]

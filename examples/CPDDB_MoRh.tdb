@@ -1,0 +1,101 @@
+$ Mo-Rh
+$
+$ TDB-file for the thermodynamic assessment of the Mo-Rh system
+$
+$-------------------------------------------------------------------------------
+$ 2020.03.05
+$ 
+$ TDB file created by T.Abe, K.Hashimoto, and Y.Goto
+$
+$ Computational Structural Materials Design Group , National Institute for 
+$ Materials Science. 1-2-1 Sengen, Tsukuba, Ibaraki 305-0047, Japan
+$ e-mail: abe.taichi @nims.go.jp
+$ Copyright (C) NIMS 2020
+$
+$-------------------------------------------------------------------------------
+$ PARAMETERS ARE TAKEN FROM
+$ A computer assessment of the molybdenum-rhodium phase diagram,
+$ R.Gurler, J.N.Pratt, J.Alloys.Compd. 189 (1992) 97-100.
+$
+$-------------------------------------------------------------------------------
+$ Comments
+$ l. Lattice stability is very different from Unary 5.0 and is taken from 
+$ S.A.Kats, V.Ya.Chekhovskoi, N.B.Gorina, V.Polyakova, E.M.Savitskii, 
+$ V.S.E.S. 1. Konif, Kalorif, 2 (1977) 351-337. 
+$
+$ 2. The polynomial for the excess gibbs energy is differnt from R-K type
+$ and thus was converted in this TDB.
+$
+$ 3. Calculated phase diagram and gibbs energy of the pahse are slightly 
+$ different from given figures. 
+$
+$                                                                  T.A.
+$-------------------------------------------------------------------------------
+ ELEMENT /-   ELECTRON_GAS              0.0000E+00  0.0000E+00  0.0000E+00 !
+ ELEMENT VA   VACUUM                    0.0000E+00  0.0000E+00  0.0000E+00 !
+ ELEMENT MO   BCC_A2                    9.5940E+01  4.5890E+03  2.8560E+01 !
+ ELEMENT RH   FCC_A1                    1.0291E+02  4.9204E+03  3.1505E+01 !
+$
+$-------------------------------------------------------------------------------
+ TYPE_DEFINITION % SEQ *!
+ DEFINE_SYSTEM_DEFAULT SPECIE 2 !
+ DEFAULT_COMMAND DEF_SYS_ELEMENT VA /- !
+
+$-------------------------------------------------------------------------------
+$ MO
+$-------------------------------------------------------------------------------
+ FUNCTION GHSERMO  298.15  +0;                                     6000 N !
+ FUNCTION GLIQMO   298.15  +41402.91-14.2966*T+GHSERMO;            6000 N !
+ FUNCTION GFCCMO   298.15  +15200+0.63*T+GHSERMO;                  6000 N ! 
+ FUNCTION GHCPMO   298.15  +11550+GHSERMO;                         6000 N !
+
+$-------------------------------------------------------------------------------
+$ RH
+$-------------------------------------------------------------------------------
+  FUNCTION GHSERRH  298.15  +0;                                    6000 N !
+  FUNCTION GLIQRH   298.15  +26568.0-11.88*T+GHSERRH ;             6000 N !
+  FUNCTION GBCCRH   298.15  +6904+4.39*T+GHSERRH;                  6000 N !
+  FUNCTION GHCPRH   298.15  +628+0.63*T+GHSERRH;                   6000 N !
+
+$-------------------------------------------------------------------------------
+$ LIQUID
+$-------------------------------------------------------------------------------
+ PHASE  LIQUID % 1 1     !
+   CONSTITUENT  LIQUID : MO,RH    :   !
+  PARAMETER G(LIQUID,MO;0)    298.15  +GLIQMO;                     6000 N !
+  PARAMETER G(LIQUID,RH;0)    298.15  +GLIQRH;                     6000 N !
+  PARAMETER G(LIQUID,MO,RH;0) 298.15  -102595.3+40.525*T;          6000 N !
+  PARAMETER G(LIQUID,MO,RH;1) 298.15  +42341.205-22.19*T;          6000 N !
+  PARAMETER G(LIQUID,MO,RH;2) 298.15  -6.945+0.055*T;              6000 N !
+
+$-------------------------------------------------------------------------------
+$ BCC_A2
+$-------------------------------------------------------------------------------
+ PHASE  BCC % 1 1     !
+   CONSTITUENT  BCC : MO,RH :   !
+  PARAMETER G(BCC,MO;0)    298.15  +GHSERMO;                    6000 N !
+  PARAMETER G(BCC,RH;0)    298.15  +GBCCRH;                     6000 N !
+  PARAMETER G(BCC,MO,RH;0) 298.15  +1618.97-9.315*T;            6000 N !
+  PARAMETER G(BCC,MO,RH;1) 298.15  +20888.46+3.835*T;           6000 N !
+
+$-------------------------------------------------------------------------------
+$ FCC_A1
+$-------------------------------------------------------------------------------
+ PHASE FCC % 1 1 !
+   CONSTITUENT  FCC : MO,RH :   !
+  PARAMETER G(FCC,MO;0)    298.15  +GFCCMO;                     6000 N !
+  PARAMETER G(FCC,RH;0)    298.15  +GHSERRH;                    6000 N !
+  PARAMETER G(FCC,MO,RH;0) 298.15  +10412.809-15.294*T;         6000 N !
+  PARAMETER G(FCC,MO,RH;1) 298.15  +99700.75-49.71*T;           6000 N !
+
+$-------------------------------------------------------------------------------
+$ HCP_A3
+$-------------------------------------------------------------------------------
+ PHASE  HCP %  1 1     !
+   CONSTITUENT  HCP : MO,RH :   !
+  PARAMETER G(HCP,MO;0)    298.15  +GHCPMO;                     6000 N !
+  PARAMETER G(HCP,RH;0)    298.15  +GHCPRH;                     6000 N !
+  PARAMETER G(HCP,MO,RH;0) 298.15  -38456.402+7.441*T;          6000 N !
+  PARAMETER G(HCP,MO,RH;1) 298.15  +30003.25-12.936*T;          6000 N !
+
+$--------------------------------------------------------------------END OF LINE

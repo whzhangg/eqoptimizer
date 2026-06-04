@@ -3,9 +3,9 @@ from .cef_model import (
     CEF,
     EndMemberTerm,
     PairExcessTerm,
-    TempPolynomial,
     TernaryExcessTerm,
 )
+from .polynomial import TempPolynomial
 
 __all__ = [
     "ThermodynamicModel",

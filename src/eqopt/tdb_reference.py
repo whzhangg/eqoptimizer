@@ -16,6 +16,7 @@ class PhaseCompositions:
         s+= ','.join([f'x_{ele}={self.compositions[ele]:.3f}' for ele in sorted_ele])
         return s + ')'
 
+
 @dataclasses.dataclass
 class EquilibriumCompositions:
     """Observed phase compositions for one distinct equilibrium."""
@@ -26,6 +27,7 @@ class EquilibriumCompositions:
         s = f'T = {self.temperature:g} '
         s += ' = '.join(str(phase) for phase in self.phases)
         return s
+
 
 @dataclasses.dataclass
 class PhaseModels:

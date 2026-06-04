@@ -42,6 +42,7 @@ def multi_simplex_samples_dirichlet(
         ]
     )
 
+
 def simplex_samples_dirichlet(
     n_components: int,
     n_samples_each_side: int = 128,
