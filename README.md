@@ -156,3 +156,40 @@ $$
 \lambda_3 = \frac{1}{2s^2};\quad\text{or}\quad \frac{\lambda_3}{\lambda_1} = \left(\frac{\sigma}{s RT}\right)^2
 $$
 In such case, roughly, we can set $s$ to be about $2000$ J/mol and we have $\lambda_3/\lambda_1$ at the order of $10^{-11}$.
+
+#### Exponential gradient descent
+
+For ordinary gradient descent, $\mathbf{x}^{t+1} = \mathbf{x}^{t} - \eta \mathbf{g}$, where $\mathbf{g}$ is the gradient of the target function $f$, it can be equivalent be expressed as a minimization problem [[cmu](https://www.cs.cmu.edu/afs/cs.cmu.edu/academic/class/15850-f20/www/notes/lec19.pdf),[Zeyuan](https://arxiv.org/abs/1407.1537),[Bubeck](https://www.google.com/url?sa=t&source=web&rct=j&opi=89978449&url=http://sbubeck.com/Bubeck15.pdf&ved=2ahUKEwjF-NL6gO-UAxVwjK8BHYSMDtsQFnoECAsQAQ&usg=AOvVaw0ZKZnTafCWEWxqWr1Bxjox),[Sham Kakade](https://homes.cs.washington.edu/~sham/courses/stat928/lectures/lecture22.pdf)]:
+$$
+\begin{align*}
+\mathbf{x}^{t+1} &\leftarrow \arg\min_{\mathbf{x}} \left\{ \underbrace{f(\mathbf{x}^{(t)}) + \langle \mathbf{g}, \mathbf{x}-\mathbf{x}^{(t)}\rangle}_{\text{linearized estimate at $\mathbf{x}$}} + \underbrace{\frac{\lambda}{2}||\mathbf{x}-\mathbf{x}^{(t)}||^2}_{\text{penalty}}\right\} \\
+&\leftarrow \arg\min_{\mathbf{x}} \left\{ \eta \langle \mathbf{g}, \mathbf{x}\rangle + \frac{1}{2}||\mathbf{x}-\mathbf{x}^{(t)}||^2\right\}
+\end{align*}
+$$
+The penalty term is necessary so that the linearization will be valid. The second line is obtained by removing the part that does not depend on $\mathbf{x}$ and a scaling by $\eta=1/\lambda$. Minimizing the term in the bracket leads to gradient descent:
+$$
+L = \eta \sum_i g_i x_i + \frac{1}{2} \sum_i (x_i-x_i^{(t)})^2\quad\Rightarrow \quad
+\frac{\partial L}{\partial x_i} = \eta g_i + x_i - x_i^{(t)}= 0 \\
+x_i = x_i^{(t)} - \eta g_i
+$$
+
+Similarly, we can change the penalty term from eculidean norm to divergence measure to reflect the property of the underlying geometry. In simplex, a vector can be interpreted as probability distributions, and based on this, KL divergence measure could be introduced:
+$$
+\mathbf{x}^{t+1} \leftarrow \arg\min_{\mathbf{x}\in\mathcal{X}} \left\{ \eta \langle \mathbf{g}, \mathbf{x}\rangle + D_{\mathrm{KL}}(\mathbf{x}|\mathbf{x}^{(t)})\right\}
+$$
+and we have restricted $\mathbf{x}$ to be in the simplex: $\sum_ix_i = 1$. The constrained minimization can be done using the Lagrange:
+$$
+L = \eta \sum_i g_i x_i + \sum_i x_i \log\left(\frac{x_i}{x_i^{(t)}}\right) + \lambda \left(\sum_ix_i - 1\right)
+$$
+and we have:
+$$
+\frac{\partial L}{\partial x_i} = \eta g_i + \log\left(\frac{x_i}{x_i^{(t)}}\right) + 1 + \lambda = 0 \quad \Rightarrow\quad x_i = x_i^{(t)} e^{-\eta g_i - 1 - \lambda} \\
+\frac{\partial L}{\partial \lambda} = \sum_i x_i - 1 = 0 \quad\Rightarrow\quad
+\sum_i x_i^{(t)} e^{-\eta g_i - 1 - \lambda} = e^{-1-\lambda} \sum_i x_i^{(t)} e^{-\eta g_i} = 1
+$$
+so that we see $e^{-1-\lambda}$ is just a normalization factor, leading to:
+$$
+\boxed{
+e^{-1-\lambda} = x_i^{(t)} e^{-\eta g_i - 1 - \lambda} = \frac{x_i^{(t)} e^{-\eta g_i}}{\sum_i x_i^{(t)} e^{-\eta g_i}}
+}
+$$

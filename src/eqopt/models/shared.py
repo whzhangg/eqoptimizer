@@ -26,16 +26,25 @@ def get_tensor_mu(mu_dict: Mapping[str, float | Tensor], elements: Sequence[str]
 
 def temperature_powers(
     temperature,
-    polynomial_order: int,
+    orders: int | Sequence[int] | Tensor,
     temperature_ref: float,
 ) -> Tensor:
     """Return powers of scaled temperature, (T / T_ref)^n."""
     temperature = torch.as_tensor(temperature, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
-    powers = torch.arange(
-        polynomial_order + 1,
-        device=temperature.device,
-        dtype=temperature.dtype,
-    )
+    if isinstance(orders, int):
+        powers = torch.arange(
+            orders + 1,
+            device=temperature.device,
+            dtype=temperature.dtype,
+        )
+    elif isinstance(orders, Tensor):
+        powers = orders.to(device=temperature.device, dtype=temperature.dtype)
+    elif isinstance(orders, Sequence):
+        powers = torch.as_tensor(
+            orders, device=temperature.device, dtype=temperature.dtype
+        )
+    else:
+        raise ValueError(f'orders should be int or sequence of int, get {orders}')
     return (temperature[..., None] / temperature_ref) ** powers
 
 

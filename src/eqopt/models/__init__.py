@@ -5,7 +5,7 @@ from .cef_model import (
     PairExcessTerm,
     TernaryExcessTerm,
 )
-from .polynomial import TempPolynomial
+from .polynomial import TempPolynomial, TempPolynomialwCorrection
 
 __all__ = [
     "ThermodynamicModel",
@@ -13,5 +13,6 @@ __all__ = [
     "EndMemberTerm",
     "PairExcessTerm",
     "TempPolynomial",
+    "TempPolynomialwCorrection",
     "TernaryExcessTerm",
 ]
