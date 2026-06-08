@@ -12,7 +12,7 @@ PRESSURE = constants.atm # 101325
 
 def multi_simplex_samples_dirichlet(
     n_components: typing.List[int],
-    n_samples_each_side: int = 128,
+    n_samples_each_side: int,
     *,
     eps: float = 1.0e-8,
 ) -> Tensor:
@@ -45,8 +45,8 @@ def multi_simplex_samples_dirichlet(
 
 def simplex_samples_dirichlet(
     n_components: int,
-    n_samples_each_side: int = 128,
     *,
+    n_samples_each_side: int | None = None,
     n_samples_total: int = None,
     eps: float = 1.0e-8,
 ) -> Tensor:
@@ -65,6 +65,10 @@ def simplex_samples_dirichlet(
     if n_samples_total is not None:
         nsamples_total = n_samples_total
     else:
+        if n_samples_each_side is None:
+            raise ValueError(
+                "Either n_samples_each_side or n_samples_total must be supplied."
+            )
         nsamples_total = int(
             n_samples_each_side**(n_components-1) / math.factorial(n_components-1)
         )

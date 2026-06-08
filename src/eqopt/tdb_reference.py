@@ -1,14 +1,15 @@
 import dataclasses
-import typing
+from collections.abc import Sequence, Mapping
 import numpy as np
 
 from .utilities import simplex_samples_dirichlet, PRESSURE
+from .loss_function import PhaseEquilibrium, PhaseEntry
 
 @dataclasses.dataclass
 class PhaseCompositions:
     """specify a phase with a composition"""
     name: str
-    compositions: typing.Dict[str, float]
+    compositions: Mapping[str, float]
 
     def __repr__(self):
         sorted_ele = sorted(list(self.compositions.keys()))
@@ -21,7 +22,7 @@ class PhaseCompositions:
 class EquilibriumCompositions:
     """Observed phase compositions for one distinct equilibrium."""
     temperature: float
-    phases: typing.List[PhaseCompositions]
+    phases: Sequence[PhaseCompositions]
 
     def __repr__(self):
         s = f'T = {self.temperature:g} '
@@ -29,10 +30,30 @@ class EquilibriumCompositions:
         return s
 
 
+    def get_phase_equilibrium_from_phase_entries(
+        self, phases: Sequence[PhaseEntry]
+    ) -> PhaseEquilibrium:
+        """return phase equilibrium for training"""
+        input_phases = {entry.phase_name:entry for entry in phases}
+        output_phases = []
+        output_compositions = []
+        for phase in self.phases:
+            if phase.name not in input_phases:
+                raise ValueError(f'{phase.name} is not found in the set of phases')
+            output_phases.append(input_phases[phase.name])
+            output_compositions.append(phase.compositions)
+        return PhaseEquilibrium(
+            output_phases,
+            output_compositions,
+            temperature=self.temperature
+        )
+
+
+
 @dataclasses.dataclass
 class PhaseModels:
-    components: typing.List[str]
-    phases: typing.Dict[str, typing.Any]
+    components: Sequence[str]
+    phases: Mapping[str, Mapping]
 
     @classmethod
     def from_tdbfile(cls, tdbfilename: str):
@@ -82,7 +103,7 @@ class PhaseModels:
         )
 
 
-    def get_composition_if_stoichmetric(self, name) -> typing.Optional[PhaseCompositions]:
+    def get_composition_if_stoichmetric(self, name) -> PhaseCompositions | None:
         if name not in self.phases:
             return None
         model = self.phases[name]
@@ -108,7 +129,7 @@ class PhaseModels:
 
 def _composition_key(
     phase_composition: PhaseCompositions,
-    components: typing.Sequence[str],
+    components: Sequence[str],
     composition_atol: float,
 ) -> tuple[str, tuple[int, ...]]:
     scale = 1.0 / composition_atol
@@ -122,8 +143,8 @@ def _composition_key(
 
 
 def _equilibrium_key(
-    phase_compositions: typing.Sequence[PhaseCompositions],
-    components: typing.Sequence[str],
+    phase_compositions: Sequence[PhaseCompositions],
+    components: Sequence[str],
     composition_atol: float,
 ) -> tuple[tuple[str, tuple[int, ...]], ...]:
     return tuple(
@@ -136,8 +157,8 @@ def _equilibrium_key(
 
 def _composition_from_xarray(
     x_values: np.ndarray,
-    components: typing.Sequence[str],
-) -> typing.Dict[str, float]:
+    components: Sequence[str],
+) -> Mapping[str, float]:
     x_values = np.asarray(x_values, dtype=float)
     return {
         component: float(value)
@@ -170,12 +191,12 @@ class TDBHandler:
     def build_equilibrium_data(
         self,
         temperature: float,
-        phase_models: typing.Optional[PhaseModels] = None, 
+        phase_models: PhaseModels | None = None, 
         nsamples: int = 64,
         composition_atol: float = 1.0e-5,
         phase_fraction_atol: float = 1.0e-8,
         multiphase_only: bool = True
-    ) -> typing.List[EquilibriumCompositions]:
+    ) -> Sequence[EquilibriumCompositions]:
         """Calculate and deduplicate observed phase compositions at a temperature.
 
         Phase fractions are used only to decide whether a vertex is present. The

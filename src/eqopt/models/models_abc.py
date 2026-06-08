@@ -28,6 +28,7 @@ class ThermodynamicModel(nn.Module, ABC):
         mu: Mapping[str, float],
         temperature: float,
         tau: float = 1.0,
-        n_samples_each_side: int = 16,
+        n_samples_each_side: int = 64,
+        **args
     ) -> Tensor:
         """Return phase grand potential at chemical potential and temperature."""

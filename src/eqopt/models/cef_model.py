@@ -8,7 +8,7 @@ import math
 from ..dtype import DEFAULT_DEVICE, DEFAULT_TYPE
 from ..utilities import R, multi_simplex_samples_dirichlet
 from .models_abc import ThermodynamicModel
-from .polynomial import TempPolynomial
+from .polynomial import TempPolynomial, TempPolynomialwCorrection
 from .shared import (
     get_tensor_mu,
     normalize_and_order_composition,
@@ -48,11 +48,7 @@ CEFEnergyTerm = EndMemberTerm | PairExcessTerm | TernaryExcessTerm
 class CEF(ThermodynamicModel):
     cef_max_iter = 300
     cef_tol = 1.0e-5
-    cef_learning_rate = 0.05
-    cef_beta1 = 0.9
-    cef_beta2 = 0.999
     cef_eps = 1.0e-8
-    cef_penaltyweight = 1e6
     def __init__(self, 
         components_on_sublattices: Sequence[Sequence[str]],
         sublattice_multiplicities: Sequence[float],
@@ -619,7 +615,10 @@ class CEF(ThermodynamicModel):
             n_samples_each_side,
         )
         if tau is None:
-            tau = 1.0 / math.log(sampled_y.shape[0]) # shape is int
+            if sampled_y.shape[0] == 1:
+                tau = 1.0
+            else:
+                tau = 1.0 / math.log(sampled_y.shape[0]) # shape is int
 
         if int(n_steps) <= 0:
             values = self._grand_potential_from_internal_dof(
@@ -895,7 +894,12 @@ class CEF(ThermodynamicModel):
     
     
     @classmethod
-    def from_tdb_and_phasename(cls, tdb_path: str | Path, phase_name: str) -> "CEF":
+    def from_tdb_and_phasename(
+        cls, 
+        tdb_path: str | Path, 
+        phase_name: str, 
+        correction_order: int | None = None
+    ) -> "CEF":
         phase_name = phase_name.upper()
         path = Path(tdb_path)
         if not path.exists():
@@ -939,7 +943,9 @@ class CEF(ThermodynamicModel):
                     )
 
             if upper_command.startswith('PARAMETER'):
-                term = cls._energy_term_from_tdb_command(upper_command, phase_name)
+                term = cls._energy_term_from_tdb_command(
+                    upper_command, phase_name, correction_order
+                )
                 if term is not None:
                     terms.append(term)
 
@@ -954,6 +960,7 @@ class CEF(ThermodynamicModel):
         cls,
         command: str,
         phase_name: str,
+        correction_order: int | None = None
     ) -> CEFEnergyTerm | None:
         pattern = (
             r'PARAMETER\s+G\(\s*'
@@ -975,7 +982,11 @@ class CEF(ThermodynamicModel):
             for entry in match.group(2).split(':')
         ]
         order = int(match.group(3))
-        polynomial = TempPolynomial.from_expression(match.group(4))
+        if correction_order is not None:
+            polynomial = TempPolynomialwCorrection.from_expression(
+                match.group(4), list(range(correction_order+1)))
+        else:
+            polynomial = TempPolynomial.from_expression(match.group(4))
         
         mixed_sublattices = [
             index
