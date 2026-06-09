@@ -2,6 +2,7 @@ import dataclasses
 import torch
 import torch.nn.functional as F
 from collections.abc import Mapping, Set, Sequence
+from collections import Counter
 from ase import Atoms
 
 from .models.models_abc import ThermodynamicModel
@@ -99,9 +100,15 @@ class PhaseEquilibriumLoss:
         n_samples: int = 64,
         tau: float = None,
         relu_margin: float = 0.0,
+        unstable_huber_beta: float | None = 1.0,
         n_steps: int = 6,
         delta: float = 0.3,
         ):
+        _phase_name_counts = Counter([phase.phase_name for phase in all_phases])
+        for phase_name, counts in _phase_name_counts.items():
+            if counts > 1:
+                raise ValueError(f'phase {phase_name} is not unique, appeared {counts} times')
+            
         self.all_phases = all_phases
         self.stable_weight = stable_weight
         self.unstable_weight = unstable_weight
@@ -114,6 +121,7 @@ class PhaseEquilibriumLoss:
 
         self.n_samples_each_side = n_samples
         self.relu_margin = relu_margin
+        self.unstable_huber_beta = unstable_huber_beta
         self.tau = tau
         self.n_steps = n_steps
         self.delta = delta
@@ -237,11 +245,21 @@ class PhaseEquilibriumLoss:
             if phi_observed:
                 stable_total = stable_total + (
                     torch.stack(phi_observed) / rt
-                ).abs().sum() * self.stable_weight
+                ).square().sum() * self.stable_weight
             if phi_all:
-                unstable_total = unstable_total + F.relu(
+                unstable_violation = F.relu(
                     (self.relu_margin - torch.stack(phi_all)) / rt
-                ).sum() * self.unstable_weight
+                )
+                if self.unstable_huber_beta is None:
+                    unstable_penalty = unstable_violation.sum()
+                else:
+                    unstable_penalty = F.smooth_l1_loss(
+                        unstable_violation,
+                        torch.zeros_like(unstable_violation),
+                        beta=self.unstable_huber_beta /rt,
+                        reduction="sum",
+                    )
+                unstable_total = unstable_total + unstable_penalty * self.unstable_weight
 
             phi_at_equilibria.append({
                 "equilibrium": eq,
@@ -307,4 +325,3 @@ class PhaseEquilibriumLoss:
 
     def __call__(self, equilibria: Sequence[PhaseEquilibrium]) -> torch.Tensor:
         return self.get_loss_parts(equilibria)["total"]
-

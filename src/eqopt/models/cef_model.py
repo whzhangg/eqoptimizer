@@ -469,6 +469,10 @@ class CEF(ThermodynamicModel):
                 single_target_x
             )
             x0 = initial_logits.detach().cpu().numpy()
+            objective_scale = torch.clamp(
+                torch.abs(R * temperature),
+                min=1.0,
+            )
 
             def objective(logits_np: np.ndarray) -> tuple[float, np.ndarray]:
                 with torch.enable_grad():
@@ -477,7 +481,7 @@ class CEF(ThermodynamicModel):
                     value = self._gibbs_energy_per_molar_atom_from_internal_dof(
                         y,
                         temperature,
-                    ).reshape(())
+                    ).reshape(()) / objective_scale
                     grad = torch.autograd.grad(value, logits)[0]
                 return (
                     float(value.detach().cpu()),
@@ -898,7 +902,9 @@ class CEF(ThermodynamicModel):
         cls, 
         tdb_path: str | Path, 
         phase_name: str, 
-        correction_order: int | None = None
+        *,
+        temperature_ref: float = 1000,
+        correction_order: int | None = None,
     ) -> "CEF":
         phase_name = phase_name.upper()
         path = Path(tdb_path)
@@ -944,7 +950,7 @@ class CEF(ThermodynamicModel):
 
             if upper_command.startswith('PARAMETER'):
                 term = cls._energy_term_from_tdb_command(
-                    upper_command, phase_name, correction_order
+                    upper_command, phase_name, temperature_ref, correction_order
                 )
                 if term is not None:
                     terms.append(term)
@@ -960,6 +966,7 @@ class CEF(ThermodynamicModel):
         cls,
         command: str,
         phase_name: str,
+        temperature_ref: float = 1000,
         correction_order: int | None = None
     ) -> CEFEnergyTerm | None:
         pattern = (
@@ -984,9 +991,14 @@ class CEF(ThermodynamicModel):
         order = int(match.group(3))
         if correction_order is not None:
             polynomial = TempPolynomialwCorrection.from_expression(
-                match.group(4), list(range(correction_order+1)))
+                match.group(4), list(range(correction_order+1)),
+                temperature_ref=temperature_ref
+            )
         else:
-            polynomial = TempPolynomial.from_expression(match.group(4))
+            polynomial = TempPolynomial.from_expression(
+                match.group(4),
+                temperature_ref=temperature_ref
+            )
         
         mixed_sublattices = [
             index
@@ -1036,4 +1048,3 @@ class CEF(ThermodynamicModel):
         raise ValueError(
             f"Unsupported restricted CEF TDB parameter site entry: {command}"
         )
-

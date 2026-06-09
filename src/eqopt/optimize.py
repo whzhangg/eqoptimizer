@@ -1,4 +1,5 @@
 from typing import Sequence
+import math
 import torch
 from .loss_function import PhaseEquilibrium, PhaseEquilibriumLoss
 
@@ -19,7 +20,9 @@ def optimize_thermodynamic_parameters(
     lr: float = 1.0,
     optimizer_cls=torch.optim.Adam,
     print_every: int = 20,
-    loss_threshold: float | None = None
+    loss_threshold: float | None = None,
+    cosine_decay: bool = False,
+    min_lr_factor: float = 0.0,
 ):
     """Optimize thermodynamic models using PhaseEquilibriumLoss."""
     from rich.console import Console
@@ -40,12 +43,16 @@ def optimize_thermodynamic_parameters(
     if batch_size is None:
         batch_size = len(all_equilibria)
     batch_size = max(1, min(int(batch_size), len(all_equilibria)))
+    batches_per_epoch = math.ceil(len(all_equilibria) / batch_size)
+    total_steps = max(1, int(epochs) * batches_per_epoch)
 
     console.rule('PARAMETERS')
     console.print(f'epochs = {epochs}')
     if loss_threshold is not None:
         console.print(f'loss threshold = {loss_threshold}')
     console.print(f'lr = {lr}')
+    if cosine_decay:
+        console.print(f'lr schedule = cosine decay to {min_lr_factor:g} * lr')
     console.print(f'batch size = {batch_size}')
     console.print(f'sampling density = {loss.n_samples_each_side}')
     console.print(f'tau = {loss.tau}')
@@ -77,6 +84,22 @@ def optimize_thermodynamic_parameters(
     loss.print_phi_at_equilibria(initial_loss_parts, console=console)
 
     optimizer = optimizer_cls(parameters, lr=lr)
+    scheduler = None
+    if cosine_decay:
+        min_lr_factor = float(min_lr_factor)
+        if min_lr_factor < 0.0 or min_lr_factor > 1.0:
+            raise ValueError("min_lr_factor must be between 0 and 1.")
+
+        def cosine_lr_factor(step: int) -> float:
+            progress = min(max(step, 0), total_steps) / total_steps
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_lr_factor + (1.0 - min_lr_factor) * cosine
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=cosine_lr_factor,
+        )
+
     history: list[float] = []
     console.rule('OPTIMIZE')
     global_step = 0
@@ -99,15 +122,19 @@ def optimize_thermodynamic_parameters(
             total_loss = loss_parts["total"]
             total_loss.backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
             history.append(float(total_loss.detach().cpu()))
 
             if print_every and (global_step == 1 or global_step % print_every == 0):
                 stable_loss = float(loss_parts["stable"].detach().cpu())
                 unstable_loss = float(loss_parts["unstable"].detach().cpu())
                 regularization_loss = float(loss_parts["regularization"].detach().cpu())
+                current_lr = optimizer.param_groups[0]["lr"]
                 console.print(
                     f"epoch {epoch:>4d}/{epochs}, "
                     f"step {global_step:>6d}: "
+                    f"lr={current_lr:10.2e}, "
                     f"loss={history[-1]:10.2e}, "
                     f"stable={stable_loss:10.2e}, "
                     f"unstable={unstable_loss:10.2e}, "
