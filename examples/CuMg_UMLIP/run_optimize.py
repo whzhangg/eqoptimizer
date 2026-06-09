@@ -1,44 +1,55 @@
-import torch
-import typing
+from collections.abc import Sequence
+from pycalphad import Database
+
 import sys
 sys.path.append('/Users/wenhao/work/projects/2026-optimize PD/src')
-from pycalphad import Database
-from eqopt.tdb_reference import TDBHandler, EquilibriumCompositions
+from eqopt.tdb_reference import TDBHandler
+from eqopt.loss_function import PhaseEquilibrium, PhaseEntry, PhaseEquilibriumLoss
+from eqopt.optimize import optimize_thermodynamic_parameters
 from eqopt.models import CEF
 
-REF = '../CPDDB_CuMg.tdb'
-TO_OPT = 'initial.tdb'
+
 def get_observation(
-    temp = [500, 700, 900, 1050, 1100]
-) -> typing.List[EquilibriumCompositions]:
-    handler = TDBHandler(REF)
+    tdb_file: str,
+    all_phases: Sequence[PhaseEntry],
+    temp = Sequence[float]
+) -> Sequence[PhaseEquilibrium]:
+    """get PhaseEquilibrium"""
+    handler = TDBHandler(tdb_file)
     all_data = []
     for t in temp:
-        eq_data = handler.build_equilibrium_data(t)
-        all_data += eq_data
+        for eq in handler.build_equilibrium_data(t):
+            all_data.append(eq.get_phase_equilibrium_from_phase_entries(all_phases))
     return all_data
 
+REF = 'CPDDB_CuMg.tdb'
+TO_OPT = 'initial.tdb'
 
-def optimize():
+if __name__ == "__main__":
     from eqopt.optimize import optimize_thermodynamic_parameters
+
+    # step 1. get all phases
     ref_db = Database(TO_OPT)
-    candidate_phases = ref_db.phases.keys()
+    all_phases = []
+    for phase in ref_db.phases.keys():
+        all_phases.append(PhaseEntry(
+            phase_name=phase,
+            elements=ref_db.elements,
+            model=CEF.from_tdb_and_phasename(TO_OPT, phase, correction_order=1)
+        ))
 
-    phases = {}
-    for phase in candidate_phases:
-        phases[phase] = CEF.from_tdb_and_phasename(TO_OPT, phase)
-        
-    data = get_observation()
+    # step 2. define loss function
+    loss = PhaseEquilibriumLoss(all_phases, regularization_weight=1e-11)
     
-    losses = optimize_thermodynamic_parameters(
-        phases, data, steps=100, lr=100.0, print_every=20, #loss_threshold=1e-4, 
-        n_samples=32,
-        stable_weight=1.0,
-        unstable_weight=1.0,
-        tau=0.01)
+    # step 3. get phase equilibria
+    eqilibrium = get_observation(REF, all_phases, temp=[500, 700, 900, 1050, 1100])
     
-    for phase in candidate_phases:
-        print(phases[phase].get_tdb_str())
+    # step 4. optimize
+    optimize_thermodynamic_parameters(
+        loss, eqilibrium, epochs=200, lr=100.0, print_every=25
+    )
     
-
-optimize()
+    for phase in all_phases:
+        print(f'$--{phase.phase_name}--')
+        print(phase.model.get_tdb_str())
+    

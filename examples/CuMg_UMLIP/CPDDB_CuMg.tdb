@@ -69,37 +69,37 @@ $------------------------------------------------------------------------------
  DEFAULT_COMMAND DEF_SYS_ELEMENT VA /- !
  
 $------------------------------------------------------------------------------
-$ PARAMETERS FOR LIQUID PHASE
+$ PARAMETERS FOR LIQUID_CUMG PHASE
 $------------------------------------------------------------------------------
- PHASE LIQUID %  1  1.0  !
-   CONSTITUENT LIQUID :CU,MG:  !
-   PARAMETER G(LIQUID,CU;0) 298.15 +GLIQCU;                            6000 N !
-   PARAMETER G(LIQUID,MG;0) 298.15 +GLIQMG;                            6000 N !
+ PHASE LIQUID_CUMG %  1  1.0  !
+   CONSTITUENT LIQUID_CUMG :CU,MG:  !
+   PARAMETER G(LIQUID_CUMG,CU;0) 298.15 +GLIQCU;                            6000 N !
+   PARAMETER G(LIQUID_CUMG,MG;0) 298.15 +GLIQMG;                            6000 N !
 
-   PARAMETER G(LIQUID,CU,MG;0) 298.15  -36962.71 +4.74394*T; 6000 N ! $ 1998Lia
-   PARAMETER G(LIQUID,CU,MG;1) 298.15  -8182.19;             6000 N ! $ 1998Lia
+   PARAMETER G(LIQUID_CUMG,CU,MG;0) 298.15  -36962.71 +4.74394*T; 6000 N ! $ 1998Lia
+   PARAMETER G(LIQUID_CUMG,CU,MG;1) 298.15  -8182.19;             6000 N ! $ 1998Lia
 
 
 $------------------------------------------------------------------------------
 $ PARAMETERS FOR FCC_A1 PHASE
 $------------------------------------------------------------------------------
- PHASE FCC  %  2 1   1 !
-   CONSTITUENT FCC  : CU,MG : VA :  !
-   PARAMETER G(FCC,CU:VA;0)  298.15  +GHSERCU;                      6000 N !
-   PARAMETER G(FCC,MG:VA;0)  298.15  +GFCCMG;                       6000 N !
+ PHASE FCC_CUMG  %  2 1   1 !
+   CONSTITUENT FCC_CUMG  : CU,MG : VA :  !
+   PARAMETER G(FCC_CUMG,CU:VA;0)  298.15  +GHSERCU;                      6000 N !
+   PARAMETER G(FCC_CUMG,MG:VA;0)  298.15  +GFCCMG;                       6000 N !
 
-   PARAMETER G(FCC,CU,MG:VA;0)  298.15
+   PARAMETER G(FCC_CUMG,CU,MG:VA;0)  298.15
      -22059.61 +5.63232*T;                                   6000 N ! $ 1998Lia
 
 $------------------------------------------------------------------------------
 $ PARAMETERS FOR HCP_A3 PHASE
 $------------------------------------------------------------------------------
- PHASE HCP  %  2 1   0.5 !
-   CONSTITUENT HCP  : CU,MG : VA :  !
-   PARAMETER G(HCP,CU:VA;0)  298.15 +600+0.2*T +GHSERCU;  6000 N ! $ 1998Lia
-   PARAMETER G(HCP,MG:VA;0)  298.15 +GHSERMG;             6000 N !
+ PHASE HCP_CUMG  %  2 1   0.5 !
+   CONSTITUENT HCP_CUMG  : CU,MG : VA :  !
+   PARAMETER G(HCP_CUMG,CU:VA;0)  298.15 +600+0.2*T +GHSERCU;  6000 N ! $ 1998Lia
+   PARAMETER G(HCP_CUMG,MG:VA;0)  298.15 +GHSERMG;             6000 N !
 
-   PARAMETER G(HCP,CU,MG:VA;0)  298.15  +22500.0 -3.0*T;  6000 N ! $ 1998Lia
+   PARAMETER G(HCP_CUMG,CU,MG:VA;0)  298.15  +22500.0 -3.0*T;  6000 N ! $ 1998Lia
 
 $------------------------------------------------------------------------------
 $ PARAMETERS FOR COMPOUNDS

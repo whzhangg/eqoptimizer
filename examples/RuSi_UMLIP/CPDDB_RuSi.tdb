@@ -67,56 +67,51 @@ $------------------------------------------------------------------------------
  DEFAULT_COMMAND DEF_SYS_ELEMENT VA /- !
 
 $------------------------------------------------------------------------------
-$ PARAMETERS FOR LIQUID PHASE
+$ PARAMETERS FOR LIQUID_RUSI PHASE
 $------------------------------------------------------------------------------
- PHASE LIQUID  %  1  1.0  !
-   CONSTITUENT LIQUID  :RU,SI :  !
-  PARAMETER G(LIQUID,RU;0)    298.15  +GLIQRU;            4500 N !
-  PARAMETER G(LIQUID,SI;0)    298.15  +GLIQSI;            3600 N !
-  PARAMETER G(LIQUID,RU,SI;0) 298.15  -127858-27.620*T;   6000 N !
-  PARAMETER G(LIQUID,RU,SI;1) 298.15  +59628-23.850*T;    6000 N !
-  PARAMETER G(LIQUID,RU,SI;2) 298.15  +50985;             6000 N !
+ PHASE LIQUID_RUSI  %  1  1.0  !
+   CONSTITUENT LIQUID_RUSI  :RU,SI :  !
+  PARAMETER G(LIQUID_RUSI,RU;0)    298.15  +2.77837395e+04 -3.01414310e+01*T -2.21283892e-02*T**2 +1.80753253e-06*T**3;            4500 N !
+  PARAMETER G(LIQUID_RUSI,SI;0)    298.15  +5.07025454e+04 -4.14219721e+01*T -2.16794035e-02*T**2 +2.64240301e-06*T**3;            3600 N !
+  PARAMETER G(LIQUID_RUSI,RU,SI;0) 298.15  -127858-27.620*T;   6000 N !
+  PARAMETER G(LIQUID_RUSI,RU,SI;1) 298.15  +59628-23.850*T;    6000 N !
+  PARAMETER G(LIQUID_RUSI,RU,SI;2) 298.15  +50985;             6000 N !
 
 $------------------------------------------------------------------------------
 $ FUNCTIONS FOR HCP_A3
 $------------------------------------------------------------------------------
- PHASE HCP  %  1 1.0 !
-   CONSTITUENT HCP  :RU,SI :  !
-  PARAMETER G(HCP,RU;0)    298.15  +GHSERRU;         4500 N !
-  PARAMETER G(HCP,SI;0)    298.15  +GHCPSI;          3600 N !
-  PARAMETER G(HCP,RU,SI;0) 298.15  -121500+15.002*T; 6000 N !
+ PHASE HCP_RUSI  %  1 1.0 !
+   CONSTITUENT HCP_RUSI  :RU,SI :  !
+  PARAMETER G(HCP_RUSI,RU;0)    298.15  +4.16357076e+02 -2.17444478e+01*T -2.28858583e-02*T**2 +2.42665209e-06*T**3;         4500 N !
+  PARAMETER G(HCP_RUSI,SI;0)    298.15  +4.91834171e+04 -3.20890530e+01*T -2.16282559e-02*T**2 +2.58537456e-06*T**3;          3600 N !
+  PARAMETER G(HCP_RUSI,RU,SI;0) 298.15  -121500+15.002*T; 6000 N !
 
 $------------------------------------------------------------------------------
 $ PARAMETERS FOR DIAMOND_A4 PHASE
 $------------------------------------------------------------------------------
  PHASE SI  %  1  1.0  !
    CONSTITUENT SI  :SI :  !
-  PARAMETER G(SI,SI;0)  298.15  +GHSERSI;  3600 N !
+  PARAMETER G(SI,SI;0)  298.15  -1.65829087e+01 -1.12890530e+01*T -2.16282559e-02*T**2 +2.58537456e-06*T**3;  3600 N !
+
 
 $------------------------------------------------------------------------------
 $ PARAMETERS FOR COMPOUNDS
 $------------------------------------------------------------------------------
  PHASE RU2SI3 % 2  0.4  0.6  !
    CONSTITUENT RU2SI3 :RU :SI : !
-  PARAMETER G(RU2SI3,RU:SI;0) 298.15   -47969-24.002*T+1.529*T*LN(T)
-   +1.026E-3*T**2-81094*T**(-1)+0.4*GHSERRU+0.6*GHSERSI;                618.062 Y
-   -45010-101.091*T+13.745*T*LN(T)-4.440E-3*T**2-1161172*T**(-1)
-   +0.4*GHSERRU+0.6*GHSERSI;                                          6000 N !
+  PARAMETER G(RU2SI3,RU:SI;0) 298.15   -4.91452415e+04 -3.18218130e+01*T -1.10369533e-02*T**2 +1.77632962e-07*T**3;                                      6000 N !
 
  PHASE RUSI % 2  0.5  0.5  !
    CONSTITUENT RUSI :RU :SI : !
-  PARAMETER G(RUSI,RU:SI;0) 298.15   -55276-17.892*T+2.205*T*LN(T)
-    -6.122E-5*T**2-78350*T**(-1)+0.5*GHSERRU+0.5*GHSERSI;             6000 N !
+  PARAMETER G(RUSI,RU:SI;0) 298.15   -5.58666241e+04 -1.95921462e+01*T -2.07037283e-02*T**2 +2.31661841e-06*T**3;             6000 N !
 
  PHASE RU4SI3 % 2  0.5714285714285714  0.4285714285714286  !
    CONSTITUENT RU4SI3 :RU :SI : !
-  PARAMETER G(RU4SI3,RU:SI;0) 298.15   
-   -57561+3.639*T+0.5714285714285714*GHSERRU+0.4285714285714286*GHSERSI;                        6000 N !
+  PARAMETER G(RU4SI3,RU:SI;0) 298.15 -5.70320386e+04 -1.36245643e+01*T -2.23468858e-02*T**2 +2.49467601e-06*T**3;                        6000 N !
 
  PHASE RU2SI % 2  0.6666666667  0.3333333333  !
    CONSTITUENT RU2SI :RU :SI : !
-  PARAMETER G(RU2SI,RU:SI;0) 298.15   
-   -38700-1.178*T+0.666666667*GHSERRU+0.3333333333*GHSERSI;                        6000 N !
+  PARAMETER G(RU2SI,RU:SI;0) 298.15   -3.81298063e+04 -1.94373162e+01*T -2.24666575e-02*T**2 +2.47955958e-06*T**3;                        6000 N !
 
 $------------------------------------------------------------------------------
 $END OF LINE

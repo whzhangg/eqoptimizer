@@ -18,12 +18,12 @@ def get_observation(
     handler = TDBHandler(tdb_file)
     all_data = []
     for t in temp:
-        for eq in handler.build_equilibrium_data(t):
+        for eq in handler.build_equilibrium_data(t, nsamples=2):
             all_data.append(eq.get_phase_equilibrium_from_phase_entries(all_phases))
     return all_data
 
-REF = 'CPDDB_RuSi.tdb'
-TO_OPT = 'initial.tdb'
+REF = 'CPDDB.tdb'
+TO_OPT = 'CPDDB.tdb'
 
 if __name__ == "__main__":
     from eqopt.optimize import optimize_thermodynamic_parameters
@@ -35,22 +35,22 @@ if __name__ == "__main__":
         all_phases.append(PhaseEntry(
             phase_name=phase,
             elements=set(['RU','SI']),
-            model=CEF.from_tdb_and_phasename(TO_OPT, phase, temperature_ref=1800)
+            model=CEF.from_tdb_and_phasename(TO_OPT, phase, temperature_ref=1500)
         ))
-
+    
     # step 2. define loss function
-    loss = PhaseEquilibriumLoss(all_phases, regularization_weight=1e-13, regularize_difference=True)
+    loss = PhaseEquilibriumLoss(
+        all_phases, regularization_weight=1e-13, regularize_difference=True)
     
     # step 3. get phase equilibria
     eqilibrium = get_observation(
-        REF, all_phases, temp=[400, 700, 1000, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000,2200])
+        REF, all_phases, 
+        temp=[1800]
+        #temp=[400,  600,  800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
+    )
     
     # step 4. optimize
     optimize_thermodynamic_parameters(
-        loss, eqilibrium, epochs=400, lr=100.0, print_every=25
+        loss, eqilibrium, epochs=0, lr=100.0, print_every=25
     )
-    
-    for phase in all_phases:
-        print(f'$--{phase.phase_name}--')
-        print(phase.model.get_tdb_str())
     
