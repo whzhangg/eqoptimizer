@@ -9,27 +9,31 @@ conda create -n eqopt python=3.12
 pip install -e .
 ```
 
+## Introduction
+
 ## Formulation
+
+### Equilibrium condition
 
 ### Loss Functions
 
-In this project, we consider the optimization of parameters of thermodynamic models given by:
+In this project, we consider the optimization of parameters of thermodynamic *models* given by:
 $$
-\mathbf{G}_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})
+G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})
 $$
-where $\mathbf{y}^{\alpha}$ are internal coordinates of the phase $\alpha$. We use blackboard letter as external controbl variables that specified thermodynamic constraints such as $\mathbb{T}$ and $\mathbb{P}$, in constrast with internal variables $\mathbf{y}$. Thermodynamic parameters are denoted as $\mathbb{W}^{\alpha}$. The subscript $M$ indicate that this value $\mathbf{G}_M$ is defined for one molar of the cell, in which vacancy could occupy some sites. The amount of chemical species in one molar of the same cell is given by:
+where $\mathbf{y}^{\alpha}$ are internal coordinates of the phase $\alpha$. We use blackboard letter as external controbl variables that specified thermodynamic constraints such as $\mathbb{T}$ and $\mathbb{P}$, in constrast with internal variables $\mathbf{y}$. Thermodynamic parameters are denoted as $\mathbb{W}^{\alpha}$. The subscript $M$ indicate that this value $G_M$ is defined for one molar of the cell, in which vacancy could occupy some sites. The amount of chemical species in one molar of the same cell is given by:
 $$
 M_{A}^{\alpha} = M_{A}^{\alpha}(\mathbf{y}^{\alpha});\quad
 M_{B}^{\alpha} = M_{B}^{\alpha}(\mathbf{y}^{\alpha});\quad\cdots
 $$
 The total amount of chemical species is: $M^{\alpha} = \sum_{i\neq \mathrm{Vac}} M_i^{\alpha}$ and from this, we can calculate thermodynamic properties per atom:
 $$
-\mathbf{G}_m^{\alpha} = \frac{\mathbf{G}_M^{\alpha}}{M^{\alpha}}
+G_m^{\alpha} = \frac{G_M^{\alpha}}{M^{\alpha}}
 $$
 
 At a multi-phase equilibrium, all stable phases share the same chemical potential $\mu_A, \mu_B,\cdots$ where $A$, $B$ and so on index elements. For any phase, we can check if it can be in equilibrium with the system by calculating its grand potential $\Phi_m^{\alpha}$ at these chemical potentials by:
 $$
-\Phi_m^{\alpha}(\mathbb{U},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \min_{\mathbf{y}} \left[ \frac{\mathbf{G}_M^{\alpha}(\mathbf{y},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mathbb{U}_A M_A^{\alpha}(\mathbf{y})}{M^{\alpha}(\mathbf{y}_j)} \right]
+\Phi_m^{\alpha}(\mathbb{U},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \min_{\mathbf{y}} \left[ \frac{G_M^{\alpha}(\mathbf{y},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mathbb{U}_A M_A^{\alpha}(\mathbf{y})}{M^{\alpha}(\mathbf{y}_j)} \right]
 $$
 and:
 $$
@@ -39,7 +43,7 @@ $$
 \end{align*}
 $$
 
-On the other hand, at equilibrium, the chemical potentials themselves can be calculated by the phase equilibrium:
+On the other hand, at equilibrium, the equilibrium composition are related to the chemical potentials themselves by the equilibrium condition:
 $$
 \begin{gather*}
 \mathbf{G}_M^{\alpha} (\mathbb{M}^{\alpha},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A}\mu_A \mathbb{M}_A^{\alpha} = 0 \\
@@ -49,19 +53,35 @@ $$
 $$
 where $\mathbf{G}_M^{\alpha} (\mathbb{M}^{\alpha},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})$ is the single phase Gibbs energy subject to external condition $\mathbb{T}$, $\mathbb{P}$ and the given amount of species $\mathbb{M}^{\alpha}$.
 
-The above formulation gives a definition for loss function with respect to equilibrium. At observed chemical composition for each phases, given by $\mathbb{M}^{\alpha,\beta,\cdots}$, we first determine a chemical potential $(\mu_A,\mu_B,\cdots)$ from the above equation using composition constrained (single phase) Gibbs energy $\mathbf{G}_M^{\alpha} (\mathbb{M}^{\alpha},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})$ calculated at the observed equilibrium composition. Then, we calculate the grand potential $\Phi_m^{\alpha,\beta,\cdots}$ for all phases present using the determined $\mu\to\mathbb{U}$. For the observed stable phases, we require that their grand potential is zero:
+The above formulation gives a definition for loss function which should reach zero when the equilibrium is reached. Given a set of chemical potential $\boldsymbol{\mu}$, we calculate the grand potential $\Phi_m^{\alpha,\beta,\cdots}$ for all phases present. For the observed stable phases, we require that their grand potential is zero:
 $$
-l_1 = \sum_{\alpha\in\mathrm{observed}} \left|\frac{\Phi_m^{\alpha}}{R\mathbb{T}}\right|^2
+l_1(\mathbb{W},\boldsymbol{\mu}) = \sum_{\alpha\in\mathrm{observed}} \left|\frac{\Phi_m^{\alpha}}{R\mathbb{T}}\right|^2 \to 0
 $$
-At the same time, since no phase should have grand potential less than zero, we define the penalty, which is zero if $\Phi_m>0$:
+At the same time, since no phase should have grand potential less than zero, for both observed and unobserved phases, we define the penalty, which is zero if $\Phi_m>0$:
 $$
-l_2 = \sum_{\beta} \mathrm{ReLU}\left(-\frac{\Phi_m^{\beta}}{R\mathbb{T}}\right)
+l_2(\mathbb{W},\boldsymbol{\mu}) = \sum_{\beta} \mathrm{ReLU}\left(-\frac{\Phi_m^{\beta}}{R\mathbb{T}}\right) \to 0
 $$
-A scaling with temperature is used in "rough search" in PANDAT and is also introduced here. The final loss function can be written as:
+A scaling with temperature is used in "rough search" in PANDAT and is also introduced here. The chemical potential $\boldsymbol{\mu}$ can be obtained using the equilibrium condition. If $N$ phase are in equilibrium in a $N$ component system (eg. two-phase equilibrium in a binary system, three-phase equilibrium in a ternary system), the chemical potential are uniquely determined from the Gibbs energy $\mathbf{G}_M^{\alpha},\cdots$. In other cases (eg. two-phase equilibrium in a ternary system), we define auxiliary chemical potential vectors $(\mu_A, \mu_B, \cdots)$ for each phase equilibrium, which is minimized during the optimization so that:
 $$
-l = \lambda_1 l_1 + \lambda_2 l_2 + \lambda_3 l_{\mathrm{reg}}
+l_0(\mathbb{W},\boldsymbol{\mu}) = \sum_{\alpha\in\mathrm{observed}} \left[\frac{\mathbf{G}_M^{\alpha} (\mathbb{M}^{\alpha},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A}\mu_A \mathbb{M}_A^{\alpha}}{(\sum_A \mathbb{M}_A^{\alpha}) R\mathbb{T}}\right]^2 \to 0
 $$
-where we have added a regularization loss $l_{\mathrm{reg}}$, and $\lambda_{1/2/3}$ are loss weights. A possible regularization loss is: $l_{\mathrm{reg}} = \sum_i |\Delta w_i|^2$, where $\Delta w_i$ is the change of parameters, which follows if expected changes are zero centered.
+The final loss function, for a single phase equilibrium $\varepsilon$, can thus be written as:
+$$
+l_{\varepsilon}(\mathbb{W},\boldsymbol{\mu}_{\varepsilon}) = \begin{cases}
+\lambda_1 l_1 + \lambda_2 l_2 & \text{if $\boldsymbol{\mu}$ can be determined from $\mathbf{G}_M$} \\
+\lambda_0 l_0 + \lambda_1 l_1 + \lambda_2 l_2 & \text{otherwise}
+\end{cases}
+$$
+where we have added a regularization loss $l_{\mathrm{reg}}$, and $\lambda$ are loss weights. The total loss with respect to all considered phase equilibrium, plus a regularization term, can be written as:
+$$
+l_{\mathrm{tot}} = \sum_{\varepsilon} l_{\varepsilon}(\mathbb{W},\mu_{\varepsilon}) + \lambda_4 l_{\mathrm{reg}}(\mathbb{W})
+$$
+This loss function should be minimized with respect to the thermodynamic parameter $\mathbb{W}$ and possible auxiliary chemical potential $\mu$ defined for each phase equilibria. A possible regularization loss is: $l_{\mathrm{reg}} = \sum_i |\Delta w_i|^2$, where $\Delta w_i$ is the change of parameters, which follows if expected changes are zero centered.
+
+Before the optimization of thermodynamic parameter $\mathbb{W}$, it maybe benefitial to obtain a good estimate of chemical potential for each phase equilibrium if they are not uniquely determined from the Gibbs energy. It can be done by:
+$$
+\boldsymbol{\mu}_0 = \arg\min_{\boldsymbol{\mu}} [\lambda_0 l_0 + \lambda_1 l_1 + \lambda_2 l_2]
+$$
 
 ### Efficient determination of grand potential
 
@@ -121,7 +141,7 @@ M_i = \sum_s N_s y_i^{(s)}; \quad x_i = \frac{M_i}{\sum_j M_j}
 $$
 where $N_s$ is the number of sublattice in a molar formula unit. For example, in the case of $\sigma$-phase, one formula unit maybe defined to be a unit cell with 30 atoms, and then: $N_{\mathrm{2a}}=2,N_{\mathrm{4f}}=4, \cdots$. The later expression gives the chemical composition of $A$ in molar fraction. The thermodynamic model is given by:
 $$
-\mathbf{G}_m(\mathbf{y},\mathbb{T}) = \sum_{I} P_{I}(\mathbf{y}) g_I + RT \sum_s N_s \sum_{i=A}^{N} y_i^{(s)}\ln y_i^{(s)} + G_m^{\mathrm{ex}}(\mathbf{y},\mathbb{T})
+G_m(\mathbf{y},\mathbb{T}) = \sum_{I} P_{I}(\mathbf{y}) g_I + RT \sum_s N_s \sum_{i=A}^{N} y_i^{(s)}\ln y_i^{(s)} + G_m^{\mathrm{ex}}(\mathbf{y},\mathbb{T})
 $$
 where the first sum over $I$ is over possible component array specifying the occupancy of sites in the end-members. For example: $I=(AB\cdots)$ with $A$ occupy the first sublattice, etc, and $g_I$ can be interpreted as its end-member energy $g_{AB\cdots}$. The value of $P_I$ is $y_A^{(1)}y_B^{(1)}\cdots$. For the excess Gibbs energy, we first define the pairwise mixing on the same sublattice. 
 $$
