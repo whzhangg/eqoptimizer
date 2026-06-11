@@ -970,7 +970,7 @@ class CEF(ThermodynamicModel):
         correction_order: int | None = None
     ) -> CEFEnergyTerm | None:
         pattern = (
-            r'PARAMETER\s+G\(\s*'
+            r'PARA(?:METER)?\s+G\(\s*'
             r'([^,\s]+)\s*,\s*'
             r'(.+?)'
             r';\s*(\d+)\s*\)\s*'

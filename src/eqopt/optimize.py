@@ -96,20 +96,17 @@ def _aggregate_loss_parts(
     batch_indices: Sequence[int],
     all_phases: Sequence[PhaseEntry],
     *,
-    tangent_weight: float,
     stable_weight: float,
     unstable_weight: float,
     regularization_weight: float,
     parameter0: dict[str, dict[str, torch.Tensor]] | None,
 ) -> dict[str, object]:
-    tangent = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
     stable = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
     unstable = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
     phi_at_equilibria = []
 
     for equilibrium_index in batch_indices:
         parts = equilibrium_losses[equilibrium_index].get_loss_parts()
-        tangent = tangent + parts["tangent"]
         stable = stable + parts["stable"]
         unstable = unstable + parts["unstable"]
         phi_at_equilibria.append({
@@ -118,7 +115,6 @@ def _aggregate_loss_parts(
         })
 
     normalizer = max(len(batch_indices), 1)
-    tangent = tangent / normalizer
     stable = stable / normalizer
     unstable = unstable / normalizer
     regularization = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
@@ -128,14 +124,12 @@ def _aggregate_loss_parts(
         )
 
     total = (
-        tangent_weight * tangent
-        + stable_weight * stable
+        stable_weight * stable
         + unstable_weight * unstable
         + regularization
     )
     return {
         "phi_at_equilibria": phi_at_equilibria,
-        "tangent": tangent,
         "stable": stable,
         "unstable": unstable,
         "regularization": regularization,
@@ -170,7 +164,6 @@ def optimize_thermodynamic_parameters(
     loss_threshold: float | None = None,
     cosine_decay: bool = False,
     min_lr_factor: float = 0.0,
-    tangent_weight: float = 1.0,
     stable_weight: float = 1.0,
     unstable_weight: float = 1.0,
     regularization_weight: float = 1.0e-12,
@@ -178,7 +171,6 @@ def optimize_thermodynamic_parameters(
     n_samples: int = 64,
     tau: float | None = None,
     relu_margin: float = 0.0,
-    use_tangent_huber: bool = True,
     unstable_huber_beta: float | None = 1.0,
     n_steps: int = 6,
     delta: float = 0.3,
@@ -227,7 +219,6 @@ def optimize_thermodynamic_parameters(
                 n_samples=n_samples,
                 tau=tau,
                 relu_margin=relu_margin,
-                use_tangent_huber=use_tangent_huber,
                 unstable_huber_beta=unstable_huber_beta,
                 n_steps=n_steps,
                 delta=delta,
@@ -283,11 +274,9 @@ def optimize_thermodynamic_parameters(
     console.print(f"batch size = {batch_size}")
     console.print(f"sampling density = {n_samples}")
     console.print(f"tau = {tau}")
-    console.print(f"use tangent huber = {use_tangent_huber}")
     console.print(f"unstable huber beta = {unstable_huber_beta}")
     console.print(f"exp-gradient steps = {n_steps}")
     console.print(f"exp-gradient delta = {delta}")
-    console.print(f"tangent weight = {tangent_weight}")
     console.print(f"stable weight = {stable_weight}")
     console.print(f"unstable weight = {unstable_weight}")
     console.print(f"regularization weight = {regularization_weight}")
@@ -324,7 +313,6 @@ def optimize_thermodynamic_parameters(
             equilibrium_losses,
             all_indices,
             all_phases,
-            tangent_weight=tangent_weight,
             stable_weight=stable_weight,
             unstable_weight=unstable_weight,
             regularization_weight=regularization_weight,
@@ -377,7 +365,6 @@ def optimize_thermodynamic_parameters(
                 equilibrium_losses,
                 batch_indices,
                 all_phases,
-                tangent_weight=tangent_weight,
                 stable_weight=stable_weight,
                 unstable_weight=unstable_weight,
                 regularization_weight=regularization_weight,
@@ -391,7 +378,6 @@ def optimize_thermodynamic_parameters(
             history.append(float(total_loss.detach().cpu()))
 
             if print_every and (global_step == 1 or global_step % print_every == 0):
-                tangent_loss = float(loss_parts["tangent"].detach().cpu())
                 stable_loss = float(loss_parts["stable"].detach().cpu())
                 unstable_loss = float(loss_parts["unstable"].detach().cpu())
                 regularization_loss = float(loss_parts["regularization"].detach().cpu())
@@ -402,7 +388,6 @@ def optimize_thermodynamic_parameters(
                     f"step {global_step:>6d}: "
                     f"lr={current_lr:10.2e}, "
                     f"loss={history[-1]:10.2e}, "
-                    f"tangent={tangent_loss:10.2e}, "
                     f"stable={stable_loss:10.2e}, "
                     f"unstable={unstable_loss:10.2e}, "
                     f"regularization={regularization_loss:10.2e}, "
@@ -427,7 +412,6 @@ def optimize_thermodynamic_parameters(
             equilibrium_losses,
             all_indices,
             all_phases,
-            tangent_weight=tangent_weight,
             stable_weight=stable_weight,
             unstable_weight=unstable_weight,
             regularization_weight=regularization_weight,
