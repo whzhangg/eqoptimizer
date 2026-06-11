@@ -948,7 +948,7 @@ class CEF(ThermodynamicModel):
                         for sublattice in match.group(2).split(':')
                     )
 
-            if upper_command.startswith('PARAMETER'):
+            if upper_command.startswith('PARA'):
                 term = cls._energy_term_from_tdb_command(
                     upper_command, phase_name, temperature_ref, correction_order
                 )

@@ -2,7 +2,7 @@ import dataclasses
 from collections.abc import Sequence, Mapping
 import numpy as np
 
-from .utilities import simplex_samples_dirichlet, PRESSURE
+from .utilities import PRESSURE
 from .loss_function import PhaseEquilibrium, PhaseEntry
 
 @dataclasses.dataclass
@@ -206,20 +206,14 @@ class TDBHandler:
         phase_model_to_use = phase_models or self.phase_models
         components = [c for c in self.components if c not in ('VA', '/-')]
         
-        sampled = simplex_samples_dirichlet(
-            n_components=len(components),
-            n_samples_each_side=nsamples    
-        ).detach().numpy()
-
         conditions = {
             v.P: PRESSURE, 
             v.T: temperature, 
         }
+        composition_grid = np.linspace(0.0, 1.0, nsamples)
         for ic in range(len(components)-1):
-            conditions[v.X(components[ic])] = sampled[:,ic]
+            conditions[v.X(components[ic])] = composition_grid
         
-        #print(conditions)
-        #print(self.phase_names)
         eq = equilibrium(
             self.tdbfilename, comps=self.components, phases=self.phase_names, 
             conditions=conditions

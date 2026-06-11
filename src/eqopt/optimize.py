@@ -1,5 +1,6 @@
 from typing import Sequence
 import math
+from pathlib import Path
 import time
 
 import torch
@@ -177,6 +178,7 @@ def optimize_thermodynamic_parameters(
     n_samples: int = 64,
     tau: float | None = None,
     relu_margin: float = 0.0,
+    use_tangent_huber: bool = True,
     unstable_huber_beta: float | None = 1.0,
     n_steps: int = 6,
     delta: float = 0.3,
@@ -187,7 +189,8 @@ def optimize_thermodynamic_parameters(
     mu_strategy: str = "auto",
     analytic_condition_threshold: float = 1.0e10,
     console=None,
-    print_final_results: bool = True
+    print_final_results: bool = True,
+    mu_checkpoint_path: str | Path | None = None,
 ):
     """Optimize thermodynamic models using per-equilibrium loss objects."""
     if console is None:
@@ -210,7 +213,12 @@ def optimize_thermodynamic_parameters(
         else None
     )
 
+    mu_checkpoint = Path(mu_checkpoint_path) if mu_checkpoint_path is not None else None
+    load_mu_checkpoint = mu_checkpoint is not None and mu_checkpoint.exists()
+
     console.rule("BUILD EQUILIBRIUM LOSSES")
+    if load_mu_checkpoint:
+        console.print(f"loading initialized mu from {mu_checkpoint}")
     equilibrium_losses = torch.nn.ModuleList(
         [
             SinglePhaseEquilibriumLoss(
@@ -219,6 +227,7 @@ def optimize_thermodynamic_parameters(
                 n_samples=n_samples,
                 tau=tau,
                 relu_margin=relu_margin,
+                use_tangent_huber=use_tangent_huber,
                 unstable_huber_beta=unstable_huber_beta,
                 n_steps=n_steps,
                 delta=delta,
@@ -228,11 +237,31 @@ def optimize_thermodynamic_parameters(
                 mu_init_cosine_decay=mu_init_cosine_decay,
                 mu_strategy=mu_strategy,
                 analytic_condition_threshold=analytic_condition_threshold,
+                initialize_mu=not load_mu_checkpoint,
                 console=console,
             )
             for equilibrium in all_equilibria
         ]
     )
+    if load_mu_checkpoint:
+        checkpoint = torch.load(mu_checkpoint, map_location=DEFAULT_DEVICE)
+        state_dict = checkpoint.get("equilibrium_losses_state", checkpoint)
+        equilibrium_losses.load_state_dict(state_dict)
+        console.print(f"loaded initialized mu from {mu_checkpoint}")
+    elif mu_checkpoint is not None:
+        mu_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "equilibrium_losses_state": equilibrium_losses.state_dict(),
+                "n_equilibria": len(all_equilibria),
+                "mu_strategy": [
+                    equilibrium_loss.strategy
+                    for equilibrium_loss in equilibrium_losses
+                ],
+            },
+            mu_checkpoint,
+        )
+        console.print(f"saved initialized mu to {mu_checkpoint}")
 
     parameters = _collect_trainable_parameters(all_phases, equilibrium_losses)
     if not parameters:
@@ -254,6 +283,8 @@ def optimize_thermodynamic_parameters(
     console.print(f"batch size = {batch_size}")
     console.print(f"sampling density = {n_samples}")
     console.print(f"tau = {tau}")
+    console.print(f"use tangent huber = {use_tangent_huber}")
+    console.print(f"unstable huber beta = {unstable_huber_beta}")
     console.print(f"exp-gradient steps = {n_steps}")
     console.print(f"exp-gradient delta = {delta}")
     console.print(f"tangent weight = {tangent_weight}")
