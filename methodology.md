@@ -10,11 +10,11 @@ In this project, we consider the optimization of parameters of thermodynamic *mo
 $$
 G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha})
 $$
-where $\mathbf{y}^{\alpha}$ are internal coordinates of the phase $\alpha$ which satisfy a series of constraints:
+where $\mathbf{y}^{\alpha}$ are internal coordinates of the phase $\alpha$ which may need to satisfy a series of constraints: 
 $$
 C_1^{\alpha}(\mathbf{y}^{\alpha}) = 0,\quad C_2^{\alpha}(\mathbf{y}^{\alpha}) = 0,\quad \cdots
 $$
-The subscript $M$ indicate that this value $G_M$ is defined for one molar of the cell, in which vacancy could occupy some sites. The amount of chemical species in one molar of the same cell is given by:
+The subscript $M$ in $G_M$ indicate that this value $G_M$ is defined for one molar of the cell, in which vacancy could occupy some sites. The amount of chemical species in one molar of the same cell is given by functions:
 $$
 M_{A}^{\alpha} = M_{A}^{\alpha}(\mathbf{y}^{\alpha});\quad
 M_{B}^{\alpha} = M_{B}^{\alpha}(\mathbf{y}^{\alpha});\quad\cdots
@@ -24,12 +24,86 @@ $$
 G_m^{\alpha} = \frac{G_M^{\alpha}}{M^{\alpha}}
 $$
 
-The equilibrium at given temperature $\mathbb{T}$, pressure $\mathbb{T}$ and total number of atoms for each element $A$: $\mathbb{N}_A$ can be obtained by a constrained minimization:
+The equilibrium at given temperature $\mathbb{T}$, pressure $\mathbb{T}$ and total number of atoms for each element $A$: $\mathbb{N}_A$ can be obtained by minimizing thermodynamic model with respect to constraints, from which we can obtain the Gibbs energy:
 $$
-\mathbf{G}(\mathbb{N}, \mathbb{T}, \mathbb{P}) = 
+\mathbf{G}(\mathbb{N}, \mathbb{T}, \mathbb{P}) = \min_{(\mathbf{y},T,P)} G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha}) \quad\text{subject to}
+\begin{cases}
+T = \mathbb{T}\\
+P = \mathbb{P}\\
+M_{i}^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{N}_i \quad i\in\{A,B,\cdots\} \\
+C_1^{\alpha}(\mathbf{y}^{\alpha}) = 0, \cdots
+\end{cases}
 $$
+where we use black-bold letters to denote external variables. $T$ and $P$ are trivally solved. The minimization can be done by finding the stationary point of the Lagrange:
+$$
+L(\mathbf{y}^{\alpha},\boldsymbol{\mu},\boldsymbol{\zeta}) = G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) + \sum_A \mu_A [\mathbb{N}_A-M_{A}^{\alpha}(\mathbf{y}^{\alpha})] + \sum_k \zeta_k C_k^{\alpha}(\mathbf{y}^{\alpha})
+$$
+where $\boldsymbol{\mu}$ and $\boldsymbol{\zeta}$ are lagrange multiplier for the mass balance constraints and constraints on $\mathbf{y}$. $\boldsymbol{\mu}$ can be shown to be the chemical potential. The equilibrium condition is thus:
+- For each $y_i$:
+    $$
+    \frac{\partial G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})}{\partial y_i} - \sum_A \mu_A \frac{\partial M_{A}^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i} + \sum_k \zeta_k \frac{C_k^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i} = 0
+    $$
+- For each component $A$, we require mass balance: $\mathbb{N}_A-M_{A}^{\alpha}(\mathbf{y}^{\alpha}) = 0$
+- For each constraints on $\mathbf{y}^{\alpha}$ should be satisfied : $C_k^{\alpha}(\mathbf{y}^{\alpha}) = 0$
+
+If we have multiply phase in equilibrium with phase fraction $\mathcal{N}^{\alpha},\mathcal{N}^{\beta},\cdots$, the equilibrium is given by:
+$$
+\mathbf{G}(\mathbb{N}, \mathbb{T}, \mathbb{P}) = \min_{(\mathbf{y},\mathcal{N},T,P)} \left[\sum_{\alpha} \mathcal{N}^{\alpha} G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha})\right] \quad\text{subject to}
+\begin{cases}
+T = \mathbb{T}\\
+P = \mathbb{P}\\
+\sum_{\alpha}\mathcal{N}^{\alpha} M_{A}^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{N}_A, \cdots\\
+C_1^{\alpha}(\mathbf{y}^{\alpha}) = 0, \cdots
+\end{cases}
+$$
+with the following equilibrium condition:
+- For each $y_i$:
+$$
+\mathcal{N}^{\alpha}  \left[\frac{\partial G^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})}{\partial y_i^{\alpha}} - \sum_{A} \mu_A \frac{\partial M_{A}^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i^{\alpha}} \right] + \sum_k \zeta_k \frac{C_k^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i^{\alpha}} = 0
+$$
+- For each phase $\alpha$:
+$$
+G^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mu_A M_{A}^{\alpha}(\mathbf{y}^{\alpha}) = 0
+$$
+- Constraints $\sum_{\alpha}\mathcal{N}^{\alpha} M_{A}^{\alpha}(\mathbf{y}^{\alpha}) - \mathbb{N}_A = 0$ for each components $A$ and $C_k^{\alpha}(\mathbf{y}^{\alpha}) = 0$ for each constraints $k$. 
+
+Typically, such non-linear system of equations are solved using Newton's method to find internal coordinates of phases as well as phase fraction if we have a multi-phase equilibrium. Furthermore, the chemical potentials are solved at the same time as Lagrange multiplier. Therefore, chemical potential can be written as a function: $\boldsymbol{\mu}=\boldsymbol{\mu}(\mathbb{T},\mathbb{P},\mathbb{W})$.
+
+If we observed an experimental equilibrium, these equilibrium conditions much be satisfied. **Therefore, loss function can be defined, in terms of the above equilibrium condition, to measure whether the observed data is reproduced by a set of model parameters $\mathbb{W}$ at a given temperature and pressure.**
 
 ### Loss Functions
+
+In the following, we assume that at any point, constraints on $\mathbf{y}$ are satisfied. Then, the term $C(\mathbf{y})$ no longer appear in the Lagrange. Furthermore, since experimental data typically contain only composition of each phases $(\mathbb{N}^{\alpha}_A,\mathbb{N}^{\alpha}_B,\cdots)$ in equilibrium without a global composition or phase fraction, the global mass balance constraints are also removed. In the end, the equilibrium condition is:
+$$
+\frac{\partial G^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})}{\partial y_i^{\alpha}} - \sum_{A} \mu_A \frac{\partial M_{A}^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i^{\alpha}} = 0 \\
+G^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mu_A M_{A}^{\alpha}(\mathbf{y}^{\alpha}) = 0 \quad \to\quad 
+\boxed{\mathbf{G}^{\alpha}_m (\mathbb{N}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mu_A \mathbb{N}^{\alpha}_A = 0}
+$$
+where $\mathbf{y}$ and $\boldsymbol{\mu}$ correspond to optimzied value, and for each phase $\alpha$, the following relationship is satisfied: $\mathbb{N}^{\alpha}_i = M_i^{\alpha}(\mathbf{y}^{\alpha})$. The first equation above, on the other hand, also defines a minimal of a thermodynamic potential $\Phi^{\alpha}$:
+$$
+\Phi^{\alpha}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \min_{\mathbf{y}^{\alpha}} \left[\mathbf{G}^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mathbb{U}_A M_{A}^{\alpha}(\mathbf{y}^{\alpha})\right]
+$$
+and we have treated chemical potential solved at equilibrium as external control parameter. This is similar to obtain the grand potential $\Phi(\mathbb{U},\mathbb{T},\mathbb{V})$ from Helmholtz potential $F(\mathbb{N},\mathbb{T},\mathbb{V})$ by Legendre transformation. For stable phases in equilibrium, we require, at equilibrium:
+$$
+\Phi^{\alpha}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \Phi^{\beta}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \cdots = 0
+$$ 
+and for unstable phases, we require:
+$$
+\Phi^{\gamma}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) > 0
+$$
+In summary, at equilibrium, knowing the composition of each phases, we have require the following condition to be satisfied:
+$$
+\boxed{
+\begin{gather*}
+\mathbf{G}^{\alpha}_m (\mathbb{N}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mathbb{U}_A \mathbb{N}^{\alpha}_A = 0 \\
+\Phi^{\alpha}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \Phi^{\beta}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \cdots = 0 \quad\text{for stable phases}\\
+\Phi^{\gamma}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) > 0 \quad\text{for unstable phases} 
+\end{gather*}
+}
+$$
+which can be used to solve thermodynamic parameters $\mathbb{W}$ and $\mathbb{U}$, where $\mathbf{G}^{\alpha}_m$ is Gibbs energy of a phase at given composition, and $\Phi^{\alpha}$ is the grand potential term defined above.
+
+---
 
 In this project, we consider the optimization of parameters of thermodynamic *models* given by:
 $$
