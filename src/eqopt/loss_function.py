@@ -1,88 +1,13 @@
-import dataclasses
 import itertools
 import math
 import torch
 import torch.nn.functional as F
-from collections.abc import Mapping, Set, Sequence
-from collections import Counter
-from ase import Atoms
+from collections.abc import Mapping, Sequence
 
-from .models.models_abc import ThermodynamicModel
+from .models.system_abc import ThermodynamicSystem
 from .dtype import DEFAULT_DEVICE, DEFAULT_TYPE
 from .utilities import R
-
-
-@dataclasses.dataclass
-class PhaseEntry:
-    """we require phase_name to be unique. in order to index"""
-    phase_name: str
-    elements: Set[str]
-    model: ThermodynamicModel
-    prototype_name: str | None = None
-    strukturbericht: str | None = None
-    structure: Atoms | None = None
-
-
-@dataclasses.dataclass
-class PhaseEquilibrium:
-    phases: Sequence[PhaseEntry]
-    phase_compositions: Sequence[Mapping[str, float]] # ordered as phases
-    temperature: float
-
-    @property
-    def elements(self) -> Set[str]:
-        ele = set()
-        for phase in self.phases:
-            ele |= phase.elements
-        return ele
-    
-    def __repr__(self) -> str:
-        s = f'T = {self.temperature:g}, '
-        parts = []
-        for phase, composition in zip(self.phases, self.phase_compositions):
-            sorted_ele = sorted(list(composition.keys()))
-            p = f'{phase.phase_name}('
-            p+= ','.join([f'x_{ele}={composition[ele]:.3f}' for ele in sorted_ele])
-            p+= ')'
-            parts.append(p)
-        
-        s += ' = '.join(parts)
-        return s
-    
-
-def _get_related_phases(
-    phases: Sequence[PhaseEntry], 
-    given_elements: Set[str] | Sequence[str]
-) -> Sequence[PhaseEntry]:
-    """return the entries possible to form given elements"""
-    given_elements = set(given_elements)
-    return [
-        phase for phase in phases if phase.elements <= given_elements
-    ]
-
-
-def _get_the_rest_of_phases(
-    phases_all: Sequence[PhaseEntry], 
-    phases_in: Sequence[PhaseEntry]
-) -> Sequence[PhaseEntry]:
-    """return all phases except ones in phases_in"""
-    input_ids = set([p.phase_name for p in phases_in])
-    return [
-        phase for phase in phases_all if phase.phase_name not in input_ids
-    ]
-
-
-def _snapshot_trainable_parameters(phase_entries: Sequence[PhaseEntry]
-) -> dict[str, dict[str, torch.Tensor]]:
-    """Return detached copies of trainable parameters for displacement priors."""
-    return {
-        phase.phase_name: {
-            parameter_name: parameter.detach().clone()
-            for parameter_name, parameter in phase.model.named_parameters()
-            if parameter.requires_grad
-        }
-        for phase in phase_entries
-    }
+from .phase import PhaseEquilibrium
 
 
 def _format_scalar_for_print(value: torch.Tensor | float) -> str:
@@ -118,24 +43,26 @@ def _condition_number(matrix: torch.Tensor) -> float:
 
 
 class SinglePhaseEquilibriumLoss(torch.nn.Module):
+    analytic_condition_threshold: float = 1.0e10
     def __init__(self,
         equilibrium: PhaseEquilibrium,
-        all_phases: Sequence[PhaseEntry],
+        system: ThermodynamicSystem,
         *,
         n_samples: int = 64,
         tau: float | None = None,
-        relu_margin: float = 0.0,
-        unstable_huber_beta: float | None = 1.0,
         n_steps: int = 6,
         delta: float = 0.3,
+        # loss calculation
+        relu_margin: float = 0.0,
+        unstable_huber_beta: float | None = 1.0,
         # mu calculation options
         mu_init_lr: float = 5000.0,
         mu_init_max_iter: int = 1000,
         mu_convergence_tol: float = 10.0,
         mu_init_cosine_decay: bool = True,
         mu_strategy: str = "auto",
-        analytic_condition_threshold: float = 1.0e10,
         initialize_mu: bool = True,
+        # IO
         console = None
     ):
         super().__init__()
@@ -148,20 +75,18 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
             raise ValueError("PhaseEquilibrium must contain at least one phase.")
 
         self.equilibrium = equilibrium
-        self.all_phases = tuple(all_phases)
-        self.elements = tuple(sorted(equilibrium.elements))
+        object.__setattr__(self, "system", system)
+        self.elements = tuple(sorted(equilibrium.chemical_system))
         self.n_samples_each_side = n_samples
         self.tau = tau
         self.relu_margin = relu_margin
         self.unstable_huber_beta = unstable_huber_beta
         self.n_steps = n_steps
         self.delta = delta
-        self.analytic_condition_threshold = analytic_condition_threshold
         self.console = console
-        self.stable_phase_ids = {phase.phase_name for phase in self.equilibrium.phases}
-        self.phases_to_evaluate = _get_related_phases(
-            self.all_phases, 
-            self.equilibrium.elements
+        self.stable_phase_ids = set(self.equilibrium.phases)
+        self.phases_to_evaluate = tuple(
+            self.system.get_competing_phases(self.elements)
         )
 
         self.x_matrix = torch.stack(
@@ -277,7 +202,8 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
             strict=True,
         ):
             values.append(
-                phase.model.gibbs_energy_per_molar_atom(
+                self.system.get_gibbs_energy(
+                    phase,
                     composition,
                     self.equilibrium.temperature,
                 ).reshape(())
@@ -322,11 +248,7 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
         if self.console is not None:
             self.console.rule("INITIAL CHEMICAL POTENTIAL")
 
-        model_parameters = [
-            parameter
-            for phase in self.all_phases
-            for parameter in phase.model.parameters()
-        ]
+        model_parameters = list(self.system.parameters())
         previous_requires_grad = [
             parameter.requires_grad
             for parameter in model_parameters
@@ -409,7 +331,8 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
         mu_dict = self._current_mu_dict()
 
         phi_by_id = {
-            phase.phase_name: phase.model.grand_potential_per_molar_atom(
+            phase: self.system.get_grand_potential(
+                phase,
                 mu_dict,
                 temperature,
                 tau=self.tau,
@@ -421,7 +344,7 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
         }
 
         phi_observed = [
-            phi_by_id[phase.phase_name]
+            phi_by_id[phase]
             for phase in self.equilibrium.phases
         ]
         phi_all = list(phi_by_id.values())
@@ -472,10 +395,10 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
             for element, value in loss_parts["mu"].items()
         )
         console.print(f"     chemical potential: {mu_text}")
-        for phase_name, phi in loss_parts["phi"].items():
-            marker = " <- stable" if phase_name in loss_parts["stable_phase_ids"] else ""
+        for phase_id, phi in loss_parts["phi"].items():
+            marker = " <- stable" if phase_id in loss_parts["stable_phase_ids"] else ""
             console.print(
-                f"     phi({phase_name:>10s}) = "
+                f"     phi({str(phase_id):>10s}) = "
                 f"{_format_scalar_for_print(phi)}{marker}"
             )
 

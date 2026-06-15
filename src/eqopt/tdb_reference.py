@@ -3,51 +3,9 @@ from collections.abc import Sequence, Mapping
 import numpy as np
 
 from .utilities import PRESSURE
-from .loss_function import PhaseEquilibrium, PhaseEntry
+from .phase import PhaseID, PhaseEquilibrium
 
-@dataclasses.dataclass
-class PhaseCompositions:
-    """specify a phase with a composition"""
-    name: str
-    compositions: Mapping[str, float]
-
-    def __repr__(self):
-        sorted_ele = sorted(list(self.compositions.keys()))
-        s = f'{self.name}('
-        s+= ','.join([f'x_{ele}={self.compositions[ele]:.3f}' for ele in sorted_ele])
-        return s + ')'
-
-
-@dataclasses.dataclass
-class EquilibriumCompositions:
-    """Observed phase compositions for one distinct equilibrium."""
-    temperature: float
-    phases: Sequence[PhaseCompositions]
-
-    def __repr__(self):
-        s = f'T = {self.temperature:g} '
-        s += ' = '.join(str(phase) for phase in self.phases)
-        return s
-
-
-    def get_phase_equilibrium_from_phase_entries(
-        self, phases: Sequence[PhaseEntry]
-    ) -> PhaseEquilibrium:
-        """return phase equilibrium for training"""
-        input_phases = {entry.phase_name:entry for entry in phases}
-        output_phases = []
-        output_compositions = []
-        for phase in self.phases:
-            if phase.name not in input_phases:
-                raise ValueError(f'{phase.name} is not found in the set of phases')
-            output_phases.append(input_phases[phase.name])
-            output_compositions.append(phase.compositions)
-        return PhaseEquilibrium(
-            output_phases,
-            output_compositions,
-            temperature=self.temperature
-        )
-
+VACANCY_COMPONENTS = {"VA", "/-"}
 
 
 @dataclasses.dataclass
@@ -103,7 +61,22 @@ class PhaseModels:
         )
 
 
-    def get_composition_if_stoichmetric(self, name) -> PhaseCompositions | None:
+    def get_phase_elements(self, name: str) -> tuple[str, ...]:
+        """Return real elements allowed on the phase constituents."""
+        if name not in self.phases:
+            return tuple(
+                component for component in self.components
+                if component not in VACANCY_COMPONENTS
+            )
+        elements = set()
+        for sublattice in self.phases[name]["sublattice_model"]:
+            for component in sublattice:
+                if component not in VACANCY_COMPONENTS:
+                    elements.add(component)
+        return tuple(sorted(elements))
+
+
+    def get_composition_if_stoichmetric(self, name) -> Mapping[str, float] | None:
         if name not in self.phases:
             return None
         model = self.phases[name]
@@ -113,44 +86,55 @@ class PhaseModels:
                 is_compound = False
                 break
         if is_compound:
-            ntot = sum(model["sublattice_site_ratios"])
-            return PhaseCompositions(
-                    name=name,
-                    compositions={
-                        ele[0]: ratio / ntot
-                        for ele, ratio in zip(
-                            model["sublattice_model"], model["sublattice_site_ratios"]
-                        )
-                    }
+            real_site_ratios = [
+                ratio
+                for ele, ratio in zip(
+                    model["sublattice_model"], model["sublattice_site_ratios"]
                 )
+                if ele[0] not in VACANCY_COMPONENTS
+            ]
+            ntot = sum(real_site_ratios)
+            return {
+                ele[0]: ratio / ntot
+                for ele, ratio in zip(
+                    model["sublattice_model"], model["sublattice_site_ratios"]
+                )
+                if ele[0] not in VACANCY_COMPONENTS
+            }
         else:
             return None
 
 
 def _composition_key(
-    phase_composition: PhaseCompositions,
+    phase_name: str,
+    composition: Mapping[str, float],
     components: Sequence[str],
     composition_atol: float,
 ) -> tuple[str, tuple[int, ...]]:
     scale = 1.0 / composition_atol
     return (
-        phase_composition.name,
+        phase_name,
         tuple(
-            int(round(phase_composition.compositions.get(component, 0.0) * scale))
+            int(round(composition.get(component, 0.0) * scale))
             for component in components
         ),
     )
 
 
 def _equilibrium_key(
-    phase_compositions: Sequence[PhaseCompositions],
+    phase_compositions: Sequence[tuple[str, Mapping[str, float]]],
     components: Sequence[str],
     composition_atol: float,
 ) -> tuple[tuple[str, tuple[int, ...]], ...]:
     return tuple(
         sorted(
-            _composition_key(phase_composition, components, composition_atol)
-            for phase_composition in phase_compositions
+            _composition_key(
+                phase_name,
+                composition,
+                components,
+                composition_atol,
+            )
+            for phase_name, composition in phase_compositions
         )
     )
 
@@ -196,7 +180,7 @@ class TDBHandler:
         composition_atol: float = 1.0e-5,
         phase_fraction_atol: float = 1.0e-8,
         multiphase_only: bool = True
-    ) -> Sequence[EquilibriumCompositions]:
+    ) -> Sequence[PhaseEquilibrium]:
         """Calculate and deduplicate observed phase compositions at a temperature.
 
         Phase fractions are used only to decide whether a vertex is present. The
@@ -204,7 +188,7 @@ class TDBHandler:
         """
         from pycalphad import equilibrium, variables as v
         phase_model_to_use = phase_models or self.phase_models
-        components = [c for c in self.components if c not in ('VA', '/-')]
+        components = [c for c in self.components if c not in VACANCY_COMPONENTS]
         
         conditions = {
             v.P: PRESSURE, 
@@ -251,14 +235,11 @@ class TDBHandler:
                 if stoichiometric is not None:
                     phase_composition = stoichiometric
                 else:
-                    phase_composition = PhaseCompositions(
-                        name=phase_name,
-                        compositions=_composition_from_xarray(
+                    phase_composition = _composition_from_xarray(
                             composition_values[grid_index + (vertex_index, slice(None))],
                             components,
-                        ),
                     )
-                phase_compositions.append(phase_composition)
+                phase_compositions.append((phase_name, phase_composition))
             #print(phase_compositions)
             if not phase_compositions:
                 continue
@@ -269,11 +250,12 @@ class TDBHandler:
             phase_compositions = list(
                 {
                     _composition_key(
-                        phase_composition,
+                        phase_name,
+                        composition,
                         components,
                         composition_atol,
-                    ): phase_composition
-                    for phase_composition in phase_compositions
+                    ): (phase_name, composition)
+                    for phase_name, composition in phase_compositions
                 }.values()
             )
 
@@ -286,26 +268,30 @@ class TDBHandler:
                 continue
 
             found_keys.add(key)
+            sorted_phase_compositions = sorted(
+                phase_compositions,
+                key=lambda phase_composition: _composition_key(
+                    phase_composition[0],
+                    phase_composition[1],
+                    components,
+                    composition_atol,
+                ),
+            )
             found_equilibrium.append(
-                EquilibriumCompositions(
+                PhaseEquilibrium(
+                    phases=[
+                        PhaseID(
+                            name=phase_name,
+                            elements=phase_model_to_use.get_phase_elements(phase_name),
+                        )
+                        for phase_name, _ in sorted_phase_compositions
+                    ],
+                    phase_compositions=[
+                        dict(composition)
+                        for _, composition in sorted_phase_compositions
+                    ],
                     temperature=temperature,
-                    phases=sorted(
-                        phase_compositions,
-                        key=lambda phase_composition: _composition_key(
-                            phase_composition,
-                            components,
-                            composition_atol,
-                        ),
-                    ),
                 )
             )
 
         return found_equilibrium
-
-
-if __name__ == '__main__':
-    import pathlib
-
-    ref = pathlib.Path(__file__).resolve().parents[2] / "examples" / "CPDDB_PbSn.tdb"
-    handler = TDBHandler(str(ref))
-    print(handler.build_equilibrium_data(550))

@@ -171,6 +171,10 @@ $$
 \boldsymbol{\mu}_0 = \arg\min_{\boldsymbol{\mu}} [\lambda_0 l_0 + \lambda_1 l_1 + \lambda_2 l_2]
 $$
 
+### Constrained minimization of gibbs energy
+
+To find the internal coordinate $\mathbf{y}_i^{\alpha}$ that minimizes the Gibbs energy at the observed composition, we have used used constraint minimization routine "SLSQP" implemented in `SciPy.optimize.minimize`. Gradient calculated from auto-differentiation is used in the optimization.
+
 ### Efficient determination of grand potential
 
 In minimization, grand potential for all possible phases need to be evaluated. Thus, we want to be able to determine the grand potential efficient. One approach is to use a $\mathrm{Softmin}$ function (defined as "LogSumExp") instead of $\min$.
@@ -301,6 +305,41 @@ $$
 e^{-1-\lambda} = x_i^{(t)} e^{-\eta g_i - 1 - \lambda} = \frac{x_i^{(t)} e^{-\eta g_i}}{\sum_i x_i^{(t)} e^{-\eta g_i}}
 }
 $$
+
+#### Envelope theorem
+
+Envelope theorem ([Kevin Wainwright](https://www.sfu.ca/~wainwrig/Econ331/env-theorem2.pdf)) gives the derivative of a function $V$ that has the following form: 
+$$
+V(\boldsymbol{\omega})=\min_{\mathbf{x}}f(\mathbf{x},\boldsymbol{\omega})
+$$
+To see envelope theorem, we first see that $\mathbf{x}^*(\boldsymbol{\omega})=\arg\min_{\mathbf{x}} f$ can be found by the following set of equations:
+$$
+\frac{\partial f(\mathbf{x},\boldsymbol{\omega})}{\partial x} = 0 \quad\Rightarrow\quad
+\mathbf{x}^*(\boldsymbol{\omega})
+$$ 
+and thus: $V(\boldsymbol{\omega}) = f(\mathbf{x}^*(\boldsymbol{\omega}), \boldsymbol{\omega})$. The derivative of $V$ with respect to parameter $\omega$ is then:
+$$
+\frac{\partial V(\boldsymbol{\omega})}{\partial \omega} = \frac{\partial f}{\partial \omega} + \sum_i \frac{\partial f}{\partial x_i^*}\frac{\partial x_i^*}{\partial \omega} = \frac{\partial f}{\partial \omega}\quad\text{since}\quad  \frac{\partial f}{\partial x_i^*} = 0
+$$
+evaluated at the optimal $\mathbf{x}^*(\boldsymbol{\omega})$. If we have constraints on $\mathbf{x}$ given by $g(\mathbf{x},\boldsymbol{\omega})=0$, $\mathbf{x}^*(\boldsymbol{\omega})$ is determined by the stationary point of the lagrangian:
+$$
+\frac{\partial f}{\partial x} + \lambda \frac{\partial g}{\partial x} = 0; \quad g=0
+$$
+since at $\mathbf{x}^*(\boldsymbol{\omega})$, the constraints are always satisfied, thus:
+$$
+\frac{\partial g(\mathbf{x}^*(\boldsymbol{\omega}),\boldsymbol{\omega})}{\partial \omega} = \frac{\partial g}{\partial \omega} + \sum_i \frac{\partial g}{\partial x_i^*}\frac{\partial x_i^*}{\partial \omega} \equiv 0 
+$$
+The derivative is:
+$$
+\begin{align*}
+\frac{\partial V(\boldsymbol{\omega})}{\partial \omega} &= \frac{\partial f}{\partial \omega} + \sum_i \frac{\partial f}{\partial x_i^*}\frac{\partial x_i^*}{\partial \omega} \\
+&= \frac{\partial f}{\partial \omega} + \sum_i \frac{\partial f}{\partial x_i^*}\frac{\partial x_i^*}{\partial \omega} + \lambda \left[ \frac{\partial g}{\partial \omega} + \sum_i \frac{\partial g}{\partial x_i^*}\frac{\partial x_i^*}{\partial \omega} \right] \\
+&= \frac{\partial L}{\partial \omega}
+\quad \left(=\frac{\partial f}{\partial \omega}\ \text{if $g$ does not explicitly depend on $\omega$}\right)
+\end{align*}
+$$
+again evaluated at $\mathbf{x}^*(\boldsymbol{\omega})$. Thus, the envelope theorem allow us to calculate the derivative of the loss function without requiring full differentiation through the entire minimization.
+
 
 # References
 

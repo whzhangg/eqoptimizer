@@ -1,20 +1,22 @@
-import torch
-from torch import nn
-from typing import Sequence, Mapping
-from pathlib import Path
+import dataclasses
 import re
-import numpy as np
 import math
-from ..dtype import DEFAULT_DEVICE, DEFAULT_TYPE
-from ..utilities import R, multi_simplex_samples_dirichlet
-from .models_abc import ThermodynamicModel
-from .polynomial import TempPolynomial, TempPolynomialwCorrection
-from .shared import (
+import torch
+from pathlib import Path
+from typing import Sequence, Mapping
+from torch import nn
+import numpy as np
+
+from ...utilities import R, multi_simplex_samples_dirichlet
+from ...dtype import DEFAULT_DEVICE, DEFAULT_TYPE
+from ..shared import (
     get_tensor_mu,
     normalize_and_order_composition,
     scalar_temperature,
 )
-import dataclasses
+from ..singlephase_abc import ThermodynamicModel
+from .polynomial import TempPolynomial, TempPolynomialwCorrection
+
 
 @dataclasses.dataclass
 class PairExcessTerm:

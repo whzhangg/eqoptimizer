@@ -1,10 +1,8 @@
 import torch
 from typing import Sequence
-from ..dtype import DEFAULT_DEVICE, DEFAULT_TYPE
-from .shared import (
-    scalar_temperature,
-    temperature_powers,
-)
+
+from ..shared import scalar_temperature, temperature_powers
+from ...dtype import DEFAULT_DEVICE, DEFAULT_TYPE
 
 class TempPolynomial(torch.nn.Module):
     """a temperature polynomial"""
