@@ -377,7 +377,7 @@ def optimize_thermodynamic_parameters(
     print_every: int = 10,
     print_final_results: bool = True,
     console=None,
-):
+) -> OptimizationState:
     """Optimize thermodynamic models using OptimizationConfig/OptimizationState."""
     if console is None:
         console = get_console()
@@ -656,4 +656,4 @@ def optimize_thermodynamic_parameters(
             console=console,
         )
     console.rule("FINISHED")
-    return state.history
+    return state

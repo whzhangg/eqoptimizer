@@ -233,20 +233,43 @@ M_i = \sum_s N_s y_i^{(s)}; \quad x_i = \frac{M_i}{\sum_j M_j}
 $$
 where $N_s$ is the number of sublattice in a molar formula unit. For example, in the case of $\sigma$-phase, one formula unit maybe defined to be a unit cell with 30 atoms, and then: $N_{\mathrm{2a}}=2,N_{\mathrm{4f}}=4, \cdots$. The later expression gives the chemical composition of $A$ in molar fraction. The thermodynamic model is given by:
 $$
-G_m(\mathbf{y},\mathbb{T}) = \sum_{I} P_{I}(\mathbf{y}) g_I + RT \sum_s N_s \sum_{i=A}^{N} y_i^{(s)}\ln y_i^{(s)} + G_m^{\mathrm{ex}}(\mathbf{y},\mathbb{T})
+G_M(\mathbf{y},\mathbb{T}) = \sum_{I} P_{I}(\mathbf{y}) g_I + RT \sum_s N_s \sum_{i=A}^{N} y_i^{(s)}\ln y_i^{(s)} + G_M^{\mathrm{ex}}(\mathbf{y},\mathbb{T})
 $$
-where the first sum over $I$ is over possible component array specifying the occupancy of sites in the end-members. For example: $I=(AB\cdots)$ with $A$ occupy the first sublattice, etc, and $g_I$ can be interpreted as its end-member energy $g_{AB\cdots}$. The value of $P_I$ is $y_A^{(1)}y_B^{(1)}\cdots$. For the excess Gibbs energy, we first define the pairwise mixing on the same sublattice. 
-$$
-G_m^{\mathrm{ex, pair}} = \sum_s N_s \left[\sum_{I_{\mathbf{t}}}\prod_i y_{k_i}^{(s_i)} \left( \sum_{i=A}^{N}\sum_{j>i} y_i^{(s)} y_j^{(s)} \mathcal{L}_{ij:I_{\mathbf{t}}}^{(s):(\mathbf{t})} \right) \right];\quad
-\mathcal{L}_{ij:I_{\mathbf{t}}}^{(s):(\mathbf{t})} = \sum_{n=0}^{v}L_{ij:I_{\mathbf{t}}}^{(s):(\mathbf{t})} (y_i^{(s)}-x_j^{(s)})^n
-$$
-where we first sum over all sublattices. For mixing on sublattice $s$, it is weighted with respect to the possible occupancy of all other sublattices (denoted as $\mathbf{t}$) with weights given by the product $\prod_i y_{k_i}^{(s_i)}$. $I_{\mathbf{t}}=(k_1,k_2,\cdots)$ index the elements occupying the other sublattices. 
+where the first sum over $I$ is over possible component array specifying the occupancy of sites in the end-members. For example: $I=(AB\cdots)$ with $A$ occupy the first sublattice, etc, and $g_I$ can be interpreted as its end-member energy $g_{AB\cdots}$. The value of $P_I$ is $y_A^{(1)}y_B^{(1)}\cdots$.
 
-Additional two sublattice mixing can be defined as follows:
+Contribution from pairwise excess term can be defined as follows, where $L^{(n)}=L(T)$ is a temperature polynomial:
 $$
-G_m^{\mathrm{ex, 2pair}} = \sum_s \sum_{t> s} \left[\sum_{I_{\mathbf{r}}}\prod_i y_{k_i}^{(s_i)} \left(\sum_{i}\sum_{j>i}\sum_m\sum_{n>m} y_i^{(s)} y_i^{(s)}y_m^{(t)} y_n^{(t)} L^{(s):(t):{\mathbf{r}}}_{ij:mn:I_{\mathbf{r}}}\right) \right] 
+G^{\mathrm{ex,pair}}_{M,ab\cdots\underbrace{(ij)}_{(s)}\cdots c}
+= y_a^{(1)}y_b^{(2)}\cdots (y_i^{(s)}y_j^{(s)})\cdots y_c^{(N)} \left[
+\sum_{n=0}^{v}L^{(n)} (y_i^{(s)}-y_j^{(s)})^n
+\right]
 $$
-where we sum over two-sublattice pairs and weighted on the occupancy of other not selected sublattices. The mixing is over product of two pairs of elements occupying different sites. 
+where the index $[ab\cdots(ij)_{(s)}\cdots c]$ means that the specific term is related to the mixing on the $(s)$-th sublattice with component $i$ and $j$, while all other sublattices are occupied by $a,b,\cdots, c$, respectively. $v$ index the order of the excess term.
+
+For the two sublattice binary mixing, one possible definition is given as follows:
+$$
+\begin{align*}
+G^{\mathrm{ex,2pair}}_{M,ab\cdots\underbrace{(ij)}_{(s)}\cdots\underbrace{(mn)}_{(r)}\cdots c}
+= y_a^{(1)}y_b^{(2)}\cdots & (y_i^{(s)}y_j^{(s)})\cdots(y_m^{(r)}y_n^{(r)})\cdots y_c^{(N)} \\
+&\times \left[
+L^{(0)} + (y_i^{(s)}-y_j^{(s)})L^{(1)} + (y_m^{(r)}-y_n^{(r)})L^{(2)} 
+\right]
+\end{align*}
+$$
+
+Ternary mixing on the same site can be given as follows, with order on interaction parameter limited to (0,1,2):
+$$
+G^{\mathrm{ex,ternary}}_{M,ab\cdots\underbrace{(ijk)}_{(s)}\cdots c}
+= y_a^{(1)}y_b^{(2)}\cdots (y_i^{(s)}y_j^{(s)}y_k^{(s)})\cdots y_c^{(N)} \left[
+v_i L^{(0)} + v_j L^{(1)} + v_k L^{(2)} 
+\right] \\
+\begin{cases}
+v_i = y^{(s)}_i + (1-y^{(s)}_i-y^{(s)}_j-y^{(s)}_k)/3\\
+v_j = y^{(s)}_j + (1-y^{(s)}_i-y^{(s)}_j-y^{(s)}_k)/3\\
+v_k = y^{(s)}_k + (1-y^{(s)}_i-y^{(s)}_j-y^{(s)}_k)/3
+\end{cases}
+$$
+From this definition, extension to quaternary mixing on the same lattice will be possible.
 
 ---
 

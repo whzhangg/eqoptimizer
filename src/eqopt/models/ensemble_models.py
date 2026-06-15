@@ -29,6 +29,10 @@ class EnsembleSystem(ThermodynamicSystem):
         self.key_to_model = nn.ModuleDict(dict(key_to_model))
 
 
+    def get_model_by_phase_id(self, phase_id: PhaseID) -> ThermodynamicModel:
+        return self.key_to_model[self._get_phase_key(phase_id)]
+
+
     def _get_phase_key(self, phase_id: PhaseID) -> str:
         try:
             return self._phase_id_to_key[phase_id]

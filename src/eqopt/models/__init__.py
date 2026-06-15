@@ -3,8 +3,14 @@ from .system_abc import ThermodynamicSystem
 from .ensemble_models import EnsembleSystem
 from .calphad.cef_model import (
     CEF,
+)
+from .calphad.cef_terms import (
+    CEFContext,
+    CEFExcessTerm,
     EndMemberTerm,
-    PairExcessTerm,
+    get_excess_term_from_tdb_string,
+    BinaryExcessTerm,
+    TwoSublatticeBinaryExcessTerm,
     TernaryExcessTerm,
 )
 from .calphad.polynomial import TempPolynomial, TempPolynomialwCorrection
@@ -14,8 +20,12 @@ __all__ = [
     "ThermodynamicSystem",
     "EnsembleSystem",
     "CEF",
+    "CEFContext",
+    "CEFExcessTerm",
     "EndMemberTerm",
-    "PairExcessTerm",
+    "get_excess_term_from_tdb_string",
+    "BinaryExcessTerm",
+    "TwoSublatticeBinaryExcessTerm",
     "TempPolynomial",
     "TempPolynomialwCorrection",
     "TernaryExcessTerm",

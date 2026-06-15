@@ -1,4 +1,3 @@
-import dataclasses
 import re
 import math
 import torch
@@ -15,36 +14,11 @@ from ..shared import (
     scalar_temperature,
 )
 from ..singlephase_abc import ThermodynamicModel
-from .polynomial import TempPolynomial, TempPolynomialwCorrection
-
-
-@dataclasses.dataclass
-class PairExcessTerm:
-    """N_s * (prod y_{condition}) * y_pair1 * y_pair2 * interaction(T) * (y_pair1 - y_pair2)^order"""
-    sublattice: int
-    pair: tuple[str, str]
-    order: int
-    conditioners: tuple[tuple[int, str], ...]
-    interaction: "TempPolynomial"
-
-
-@dataclasses.dataclass
-class TernaryExcessTerm:
-    """N_s * (prod y_{condition}) * y_pair1 * y_pair2 * y_pair3 * interaction(T)"""
-    sublattice: int
-    triplet: tuple[str, str, str]
-    conditioners: tuple[tuple[int, str], ...]
-    interaction: "TempPolynomial"
-
-
-@dataclasses.dataclass
-class EndMemberTerm:
-    """prod y_{condition} * interaction"""
-    conditioners: tuple[tuple[int, str], ...]
-    interaction: "TempPolynomial"
-
-
-CEFEnergyTerm = EndMemberTerm | PairExcessTerm | TernaryExcessTerm
+from .cef_terms import (
+    CEFContext,
+    CEFExcessTerm,
+    get_excess_term_from_tdb_string,
+)
 
 
 class CEF(ThermodynamicModel):
@@ -54,7 +28,7 @@ class CEF(ThermodynamicModel):
     def __init__(self, 
         components_on_sublattices: Sequence[Sequence[str]],
         sublattice_multiplicities: Sequence[float],
-        energy_terms: Sequence[CEFEnergyTerm],
+        energy_terms: Sequence[CEFExcessTerm],
         *,
         name: str | None = None,
     ):
@@ -86,10 +60,11 @@ class CEF(ThermodynamicModel):
         super().__init__(name or "cef", elements)
 
         self.y_names = y_names
-        self.y_names_to_index = {
+        y_names_to_index = {
             y_name: index
             for index, y_name in enumerate(y_names)
         }
+        self.y_names_to_index = y_names_to_index
         self.ncomp_for_each_sublattice = ncomp_for_each_sublattice
         self.components = components
         self.components_on_sublattices = tuple(
@@ -97,6 +72,11 @@ class CEF(ThermodynamicModel):
             for comps in components_on_sublattices
         )
         self.sublattice_multiplicities = tuple(float(n) for n in sublattice_multiplicities)
+        self.context = CEFContext(
+            y_names_to_index=y_names_to_index,
+            sublattice_multiplicities=self.sublattice_multiplicities,
+            phase_name=self.phase_name,
+        )
         self.energy_terms = tuple(energy_terms)
         self._validate_energy_terms()
         self.energy_interactions = nn.ModuleList(
@@ -115,60 +95,9 @@ class CEF(ThermodynamicModel):
 
     def _validate_energy_terms(self) -> None:
         for term in self.energy_terms:
-            for sublattice, component in term.conditioners:
-                self._require_site_fraction(component, sublattice)
-
-            if isinstance(term, EndMemberTerm):
-                self._require_complete_tdb_site_array(term)
-                continue
-            if isinstance(term, PairExcessTerm):
-                for component in term.pair:
-                    self._require_site_fraction(component, term.sublattice)
-                self._require_complete_tdb_site_array(term)
-                continue
-            if isinstance(term, TernaryExcessTerm):
-                for component in term.triplet:
-                    self._require_site_fraction(component, term.sublattice)
-                self._require_complete_tdb_site_array(term)
-                continue
-            raise TypeError(f"Unsupported CEF energy term {type(term).__name__}.")
-
-
-    def _require_site_fraction(self, component: str, sublattice: int) -> None:
-        if (component, sublattice) not in self.y_names_to_index:
-            raise ValueError(
-                f"Unknown site fraction ({component!r}, {sublattice}); "
-                f"available site fractions are {self.y_names}."
-            )
-
-
-    def _require_complete_tdb_site_array(self, term: CEFEnergyTerm) -> None:
-        nsublattice = len(self.ncomp_for_each_sublattice)
-        occupied_sublattices = [sublattice for sublattice, _ in term.conditioners]
-        if isinstance(term, (PairExcessTerm, TernaryExcessTerm)):
-            occupied_sublattices.append(term.sublattice)
-
-        duplicate_sublattices = {
-            sublattice
-            for sublattice in occupied_sublattices
-            if occupied_sublattices.count(sublattice) > 1
-        }
-        if duplicate_sublattices:
-            raise ValueError(
-                f"{type(term).__name__} has multiple entries for sublattices "
-                f"{sorted(duplicate_sublattices)}."
-            )
-
-        missing = [
-            sublattice
-            for sublattice in range(nsublattice)
-            if sublattice not in occupied_sublattices
-        ]
-        if missing:
-            raise ValueError(
-                f"{type(term).__name__} is missing entries for sublattices "
-                f"{missing}."
-            )
+            if not isinstance(term, CEFExcessTerm):
+                raise TypeError(f"Unsupported CEF energy term {type(term).__name__}.")
+            term.validate(self.context)
 
 
     def _internal_dof_from_logits(self, logits: torch.Tensor) -> torch.Tensor:
@@ -342,69 +271,14 @@ class CEF(ThermodynamicModel):
         total = torch.zeros(y.shape[:-1], dtype=y.dtype, device=y.device)
 
         for term in self.energy_terms:
-            total += self._term_coefficient(term, y) * term.interaction(temperature)
+            total += term.get_contribution(y, temperature, self.context)
 
         # entropy
         ylogy = R * temperature * (y * y.clamp_min(1.0e-12).log())
         total += (ylogy * self.multi_for_each_y).sum(dim=-1)
 
         return total
-
-
-    def _conditioner_product(
-        self,
-        y: torch.Tensor,
-        conditioners: Sequence[tuple[int, str]],
-    ) -> torch.Tensor:
-        if len(conditioners) == 0:
-            return torch.ones(y.shape[:-1], device=y.device, dtype=y.dtype)
-        indices = torch.as_tensor(
-            [
-                self.y_names_to_index[(component, sublattice)]
-                for sublattice, component in conditioners
-            ],
-            device=y.device,
-            dtype=torch.int64,
-        )
-        return y[..., indices].prod(dim=-1)
-
-
-    def _term_coefficient(self, term: CEFEnergyTerm, y: torch.Tensor) -> torch.Tensor:
-        coefficient = self._conditioner_product(y, term.conditioners)
-
-        if isinstance(term, EndMemberTerm):
-            return coefficient
-
-        if isinstance(term, PairExcessTerm):
-            i = self.y_names_to_index[(term.pair[0], term.sublattice)]
-            j = self.y_names_to_index[(term.pair[1], term.sublattice)]
-            yi = y[..., i]
-            yj = y[..., j]
-            return (
-                self.sublattice_multiplicities[term.sublattice]
-                * coefficient
-                * yi
-                * yj
-                * (yi - yj) ** term.order
-            )
-
-        if isinstance(term, TernaryExcessTerm):
-            indices = torch.as_tensor(
-                [
-                    self.y_names_to_index[(component, term.sublattice)]
-                    for component in term.triplet
-                ],
-                device=y.device,
-                dtype=torch.int64,
-            )
-            return (
-                self.sublattice_multiplicities[term.sublattice]
-                * coefficient
-                * y[..., indices].prod(dim=-1)
-            )
-
-        raise TypeError(f"Unsupported CEF energy term {type(term).__name__}.")
-        
+    
 
     def gibbs_energy_per_molar_atom(self, comp, temperature):
         temperature = scalar_temperature(temperature)
@@ -872,30 +746,7 @@ class CEF(ThermodynamicModel):
             [','.join([str(_c) for _c in comps]) for comps in self.components_on_sublattices])
         lines.append(f'constituent {self.phase_name} : {comps} : !')
         for term in self.energy_terms:
-            # TODO: it will be better for each Term to be responsible for this
-            nsublattice = len(self.ncomp_for_each_sublattice)
-            result = f'parameter g({self.phase_name},'
-
-            sites_symbol = {}
-            for sublattice, component in term.conditioners:
-                sites_symbol[sublattice] = component
-
-            if isinstance(term, EndMemberTerm):
-                elements_str = ':'.join([sites_symbol[i] for i in range(nsublattice)])
-                result += elements_str + ';0)'
-
-            if isinstance(term, PairExcessTerm):
-                sites_symbol[term.sublattice] = ",".join(term.pair)
-                elements_str = ':'.join([sites_symbol[i] for i in range(nsublattice)])
-                result += elements_str + f';{term.order})'
-
-            if isinstance(term, TernaryExcessTerm):
-                sites_symbol[term.sublattice] = ",".join(term.triplet)
-                elements_str = ':'.join([sites_symbol[i] for i in range(nsublattice)])
-                result += elements_str + ';0)'
-
-            result += ' 10.0  ' + str(term.interaction.get_expression()) + ' ; 6000 N !'
-            lines.append(result)
+            lines.append(term.to_tdb_str(self.context))
         return '\n'.join(lines).upper()
     
     
@@ -922,7 +773,7 @@ class CEF(ThermodynamicModel):
 
         multiplicity = None
         components = None
-        terms: list[CEFEnergyTerm] = []
+        parameter_commands = []
         for command in commands:
             upper_command = command.upper()
             if upper_command.startswith('PHASE'):
@@ -951,102 +802,35 @@ class CEF(ThermodynamicModel):
                     )
 
             if upper_command.startswith('PARA'):
-                term = cls._energy_term_from_tdb_command(
-                    upper_command, phase_name, temperature_ref, correction_order
-                )
-                if term is not None:
-                    terms.append(term)
+                parameter_commands.append(upper_command)
 
-        if multiplicity is None or components is None or not terms:
+        if multiplicity is None or components is None:
+            raise ValueError('phase cannot be found or imcomplete')
+
+        y_names_to_index = {}
+        y_index = 0
+        for sublattice, sublattice_components in enumerate(components):
+            for component in sublattice_components:
+                y_names_to_index[(component, sublattice)] = y_index
+                y_index += 1
+        context = CEFContext(
+            y_names_to_index=y_names_to_index,
+            sublattice_multiplicities=multiplicity,
+            phase_name=phase_name,
+        )
+
+        terms: list[CEFExcessTerm] = []
+        for command in parameter_commands:
+            term = get_excess_term_from_tdb_string(
+                command,
+                context,
+                temperature_ref=temperature_ref,
+                correction_order=correction_order,
+            )
+            if term is not None:
+                terms.append(term)
+
+        if not terms:
             raise ValueError('phase cannot be found or imcomplete')
 
         return cls(components, multiplicity, terms, name=phase_name)
-
-
-    @classmethod
-    def _energy_term_from_tdb_command(
-        cls,
-        command: str,
-        phase_name: str,
-        temperature_ref: float = 1000,
-        correction_order: int | None = None
-    ) -> CEFEnergyTerm | None:
-        pattern = (
-            r'PARA(?:METER)?\s+G\(\s*'
-            r'([^,\s]+)\s*,\s*'
-            r'(.+?)'
-            r';\s*(\d+)\s*\)\s*'
-            r'[-+0-9.Ee]+\s+'
-            r'(.+?)'
-            r';\s*[-+0-9.Ee]+\s+[YN]\s*$'
-        )
-        match = re.match(pattern, command, flags=re.IGNORECASE | re.DOTALL)
-        if not match:
-            return None
-        if match.group(1).upper() != phase_name:
-            return None
-
-        site_entries = [
-            entry.strip().upper()
-            for entry in match.group(2).split(':')
-        ]
-        order = int(match.group(3))
-        if correction_order is not None:
-            polynomial = TempPolynomialwCorrection.from_expression(
-                match.group(4), list(range(correction_order+1)),
-                temperature_ref=temperature_ref
-            )
-        else:
-            polynomial = TempPolynomial.from_expression(
-                match.group(4),
-                temperature_ref=temperature_ref
-            )
-        
-        mixed_sublattices = [
-            index
-            for index, entry in enumerate(site_entries)
-            if ',' in entry
-        ]
-        if not mixed_sublattices:
-            return EndMemberTerm(
-                conditioners=tuple(
-                    (index, entry)
-                    for index, entry in enumerate(site_entries)
-                ),
-                interaction=polynomial,
-            )
-        if len(mixed_sublattices) != 1:
-            raise ValueError(
-                f"Only one mixed sublattice is supported in restricted CEF "
-                f"TDB import: {command}"
-            )
-
-        mixed_sublattice = mixed_sublattices[0]
-        mixed_components = tuple(
-            component.strip().upper()
-            for component in site_entries[mixed_sublattice].split(',')
-            if component.strip()
-        )
-        conditioners = tuple(
-            (index, entry)
-            for index, entry in enumerate(site_entries)
-            if index != mixed_sublattice
-        )
-        if len(mixed_components) == 2:
-            return PairExcessTerm(
-                sublattice=mixed_sublattice,
-                pair=mixed_components,
-                order=order,
-                conditioners=conditioners,
-                interaction=polynomial,
-            )
-        if len(mixed_components) == 3 and order == 0:
-            return TernaryExcessTerm(
-                sublattice=mixed_sublattice,
-                triplet=mixed_components,
-                conditioners=conditioners,
-                interaction=polynomial,
-            )
-        raise ValueError(
-            f"Unsupported restricted CEF TDB parameter site entry: {command}"
-        )

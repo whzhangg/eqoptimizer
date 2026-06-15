@@ -172,6 +172,14 @@ class TDBHandler:
         return list(self.phase_models.phases.keys())
 
 
+    def get_phase_ids(self) -> Sequence[PhaseID]:
+        """find all phaseID for all phases defined"""
+        ids = []
+        for phase in self.phase_models.phases:
+            ids.append(PhaseID(phase, self.phase_models.get_phase_elements(phase)))
+        return ids
+
+
     def build_equilibrium_data(
         self,
         temperature: float,

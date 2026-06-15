@@ -18,21 +18,19 @@ def get_observation(
     handler = TDBHandler(tdb_file)
     all_data = []
     for t in temp:
-        all_data += handler.build_equilibrium_data(t)
+        all_data += handler.build_equilibrium_data(t, nsamples=8)
     return all_data
 
-
-REF = 'CPDDB_WRe.tdb'
 TO_OPT = 'initial.tdb'
-
+REF = 'CPDDB.tdb'
 
 if __name__ == "__main__":
     from eqopt.optimize import optimize_thermodynamic_parameters
 
     # step 1. get all phases and create a system
+    all_phases = {}
     ref_db = Database(TO_OPT)
     phase_ids = TDBHandler(TO_OPT).get_phase_ids()
-    all_phases = {}
     for phid in phase_ids:
         all_phases[phid] = CEF.from_tdb_and_phasename(
             TO_OPT, phid.name, correction_order=1, temperature_ref=2000
@@ -40,12 +38,12 @@ if __name__ == "__main__":
     system = EnsembleSystem(all_phases)
 
     # step 2. get data
-    eqilibrium = get_observation(REF, temp=[400, 700, 1000, 1300, 1600, 1900, 2200, 2500, 2800, 3100, 3200, 3400, 3600])
+    eqilibrium = get_observation(REF, temp=[1000, 1500, 2000, 2500, 3000])
 
     # step 3. define configuration
     config = OptimizationConfig(
         epochs=1000,
-        lr=1000, cosine_decay=True, regularization_weight=1.0e-14
+        lr=500, cosine_decay=True, regularization_weight=1.0e-14
     )
 
     # step 4. optimize
