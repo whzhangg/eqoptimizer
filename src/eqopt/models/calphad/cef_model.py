@@ -1,4 +1,3 @@
-import re
 import math
 import torch
 from pathlib import Path
@@ -17,7 +16,7 @@ from ..singlephase_abc import ThermodynamicModel
 from .cef_terms import (
     CEFContext,
     CEFExcessTerm,
-    get_excess_term_from_tdb_string,
+    get_cef_context_and_terms_from_tdb_string,
 )
 
 
@@ -764,73 +763,25 @@ class CEF(ThermodynamicModel):
         if not path.exists():
             raise FileNotFoundError(f"TDB file does not exist: {path}")
         text = path.read_text()
-        text = re.sub(r'^\s*\$.*$', '', text, flags=re.MULTILINE)
-        commands = [
-            command.strip()
-            for command in text.split('!')
-            if command.strip()
+        context, terms = get_cef_context_and_terms_from_tdb_string(
+            text,
+            phase_name,
+            temperature_ref=temperature_ref,
+            correction_order=correction_order,
+        )
+        components_by_sublattice: list[list[tuple[int, str]]] = [
+            [] for _ in range(context.nsublattice)
         ]
-
-        multiplicity = None
-        components = None
-        parameter_commands = []
-        for command in commands:
-            upper_command = command.upper()
-            if upper_command.startswith('PHASE'):
-                tokens = upper_command.split()
-                if len(tokens) >= 4 and tokens[1] == phase_name:
-                    n_sublattices = int(tokens[3])
-                    multiplicity = tuple(
-                        float(value)
-                        for value in tokens[4:4 + n_sublattices]
-                    )
-
-            if upper_command.startswith('CONSTITUENT'):
-                match = re.match(
-                    r'CONSTITUENT\s+(\s*\S+\s*)\s*:(.*):\s*$',
-                    upper_command,
-                    flags=re.IGNORECASE,
-                ) # things in () in pattern is captured by group
-                if match and match.group(1).strip().upper() == phase_name:
-                    components = tuple(
-                        tuple(
-                            component.strip().upper()
-                            for component in sublattice.split(',')
-                            if component.strip()
-                        )
-                        for sublattice in match.group(2).split(':')
-                    )
-
-            if upper_command.startswith('PARA'):
-                parameter_commands.append(upper_command)
-
-        if multiplicity is None or components is None:
-            raise ValueError('phase cannot be found or imcomplete')
-
-        y_names_to_index = {}
-        y_index = 0
-        for sublattice, sublattice_components in enumerate(components):
-            for component in sublattice_components:
-                y_names_to_index[(component, sublattice)] = y_index
-                y_index += 1
-        context = CEFContext(
-            y_names_to_index=y_names_to_index,
-            sublattice_multiplicities=multiplicity,
-            phase_name=phase_name,
+        for (component, sublattice), index in context.y_names_to_index.items():
+            components_by_sublattice[sublattice].append((index, component))
+        components = tuple(
+            tuple(component for _, component in sorted(sublattice_components))
+            for sublattice_components in components_by_sublattice
         )
 
-        terms: list[CEFExcessTerm] = []
-        for command in parameter_commands:
-            term = get_excess_term_from_tdb_string(
-                command,
-                context,
-                temperature_ref=temperature_ref,
-                correction_order=correction_order,
-            )
-            if term is not None:
-                terms.append(term)
-
-        if not terms:
-            raise ValueError('phase cannot be found or imcomplete')
-
-        return cls(components, multiplicity, terms, name=phase_name)
+        return cls(
+            components,
+            context.sublattice_multiplicities,
+            terms,
+            name=phase_name,
+        )

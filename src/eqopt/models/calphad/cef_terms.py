@@ -162,13 +162,34 @@ def _tdb_parameter_str(
     )
 
 
-def get_excess_term_from_tdb_string(
-    command: str,
-    context: CEFContext,
-    *,
-    temperature_ref: float = 1000,
-    correction_order: int | None = None,
-) -> CEFExcessTerm | None:
+def _strip_tdb_comments(text: str) -> str:
+    return re.sub(r'^\s*\$.*$', '', text, flags=re.MULTILINE)
+
+
+def _tdb_commands(text: str) -> list[str]:
+    return [
+        command.strip()
+        for command in _strip_tdb_comments(text).split('!')
+        if command.strip()
+    ]
+
+
+def _normalize_tdb_sublattice_entry(entry: str) -> tuple[str, ...]:
+    """Match pycalphad's TDB normalization: uppercase and sort per sublattice."""
+    return tuple(
+        sorted(
+            component.strip().upper()
+            for component in entry.split(',')
+            if component.strip()
+        )
+    )
+
+
+def _site_entries_to_string(site_entries: Sequence[Sequence[str]]) -> str:
+    return ":".join(",".join(entry) for entry in site_entries)
+
+
+def _parse_tdb_parameter_command(command: str) -> tuple[str, str, int, str] | None:
     pattern = (
         r'PARA(?:METER)?\s+G\(\s*'
         r'([^,\s]+)\s*,\s*'
@@ -181,14 +202,136 @@ def get_excess_term_from_tdb_string(
     match = re.match(pattern, command.strip(), flags=re.IGNORECASE | re.DOTALL)
     if not match:
         return None
+    site_entries = tuple(
+        _normalize_tdb_sublattice_entry(entry)
+        for entry in match.group(2).split(':')
+    )
+    return (
+        match.group(1).strip().upper(),
+        _site_entries_to_string(site_entries),
+        int(match.group(3)),
+        match.group(4),
+    )
 
-    phase_name = match.group(1).upper()
+
+def get_cef_context_and_terms_from_tdb_string(
+    tdb_string: str,
+    phase_name: str,
+    *,
+    temperature_ref: float = 1000,
+    correction_order: int | None = None,
+) -> tuple[CEFContext, Sequence[CEFExcessTerm]]:
+    """Parse a restricted CEF phase from TDB text using pycalphad-like ordering.
+
+    The importer intentionally normalizes species ordering inside each
+    sublattice by uppercasing and sorting, matching pycalphad's TDB parameter
+    parsing. This makes odd Redlich-Kister terms deterministic.
+    """
+    phase_name = phase_name.upper()
+    commands = _tdb_commands(tdb_string)
+
+    multiplicity = None
+    components = None
+    parameter_commands: list[str] = []
+    parameter_keys: list[tuple[str, str, int]] = []
+
+    for command in commands:
+        upper_command = command.upper()
+        if upper_command.startswith('PHASE'):
+            tokens = upper_command.split()
+            if len(tokens) >= 4 and tokens[1] == phase_name:
+                n_sublattices = int(tokens[3])
+                multiplicity = tuple(
+                    float(value)
+                    for value in tokens[4:4 + n_sublattices]
+                )
+
+        if upper_command.startswith('CONSTITUENT'):
+            match = re.match(
+                r'CONSTITUENT\s+(\s*\S+\s*)\s*:(.*):\s*$',
+                upper_command,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if match and match.group(1).strip().upper() == phase_name:
+                components = tuple(
+                    _normalize_tdb_sublattice_entry(sublattice)
+                    for sublattice in match.group(2).split(':')
+                )
+
+        if upper_command.startswith('PARA'):
+            parsed = _parse_tdb_parameter_command(command)
+            if parsed is None:
+                continue
+            param_phase_name, site_array, order, _ = parsed
+            if param_phase_name == phase_name:
+                parameter_commands.append(command.strip())
+                parameter_keys.append((param_phase_name, site_array, order))
+
+    if multiplicity is None or components is None:
+        raise ValueError(f"Phase {phase_name!r} cannot be found or is incomplete.")
+    if len(components) != len(multiplicity):
+        raise ValueError(
+            f"Phase {phase_name!r} has {len(components)} constituent "
+            f"sublattices but {len(multiplicity)} multiplicities."
+        )
+
+    y_names_to_index: dict[tuple[str, int], int] = {}
+    y_index = 0
+    for sublattice, sublattice_components in enumerate(components):
+        for component in sublattice_components:
+            y_names_to_index[(component, sublattice)] = y_index
+            y_index += 1
+
+    context = CEFContext(
+        y_names_to_index=y_names_to_index,
+        sublattice_multiplicities=multiplicity,
+        phase_name=phase_name,
+    )
+
+    orders_by_site: dict[tuple[str, str], set[int]] = {}
+    for param_phase_name, site_array, order in parameter_keys:
+        orders_by_site.setdefault((param_phase_name, site_array), set()).add(order)
+
+    terms: list[CEFExcessTerm] = []
+    for command in parameter_commands:
+        parsed = _parse_tdb_parameter_command(command)
+        if parsed is None:
+            continue
+        param_phase_name, site_array, order, _ = parsed
+        term = get_excess_term_from_tdb_string(
+            command,
+            context,
+            temperature_ref=temperature_ref,
+            correction_order=correction_order,
+            ternary_l0_only=(orders_by_site[(param_phase_name, site_array)] == {0}),
+        )
+        if term is not None:
+            terms.append(term)
+
+    if not terms:
+        raise ValueError(f"No CEF terms were found for phase {phase_name!r}.")
+    return context, terms
+
+
+def get_excess_term_from_tdb_string(
+    command: str,
+    context: CEFContext,
+    *,
+    temperature_ref: float = 1000,
+    correction_order: int | None = None,
+    ternary_l0_only: bool = False,
+) -> CEFExcessTerm | None:
+    parsed = _parse_tdb_parameter_command(command)
+    if parsed is None:
+        return None
+
+    phase_name, site_array, order, expression = parsed
     if context.phase_name is not None and phase_name != context.phase_name.upper():
         return None
 
     site_entries = [
-        entry.strip().upper()
-        for entry in match.group(2).split(':')
+        entry
+        for entry in site_array.split(':')
     ]
     if len(site_entries) != context.nsublattice:
         raise ValueError(
@@ -196,16 +339,15 @@ def get_excess_term_from_tdb_string(
             f"got {len(site_entries)}: {command}"
         )
 
-    order = int(match.group(3))
     if correction_order is not None:
         polynomial = TempPolynomialwCorrection.from_expression(
-            match.group(4),
+            expression,
             list(range(correction_order + 1)),
             temperature_ref=temperature_ref,
         )
     else:
         polynomial = TempPolynomial.from_expression(
-            match.group(4),
+            expression,
             temperature_ref=temperature_ref,
         )
 
@@ -263,6 +405,7 @@ def get_excess_term_from_tdb_string(
                 order=order,
                 conditioners=conditioners,
                 interaction=polynomial,
+                is_l0_only=ternary_l0_only,
             )
             term.validate(context)
             return term
@@ -356,6 +499,7 @@ class TernaryExcessTerm(CEFExcessTerm):
     order: int
     conditioners: tuple[tuple[int, str], ...]
     interaction: "TempPolynomial"
+    is_l0_only: bool
 
 
     def get_contribution(
@@ -372,9 +516,14 @@ class TernaryExcessTerm(CEFExcessTerm):
         coefficient = conditioner
         for site_fraction in triplet_fractions:
             coefficient = coefficient * site_fraction
-        triplet_sum = torch.stack(triplet_fractions, dim=0).sum(dim=0)
-        v = triplet_fractions[self.order] + (1.0 - triplet_sum) / 3.0
-        return coefficient * self.interaction(temperature) * v
+        
+        if self.is_l0_only:
+            """if only L0 is given, it is treated as L2=L1=L0"""
+            return coefficient * self.interaction(temperature)
+        else:
+            triplet_sum = torch.stack(triplet_fractions, dim=0).sum(dim=0)
+            v = triplet_fractions[self.order] + (1.0 - triplet_sum) / 3.0
+            return coefficient * self.interaction(temperature) * v
 
 
     def validate(self, context: CEFContext) -> bool:
@@ -427,9 +576,9 @@ class TwoSublatticeBinaryExcessTerm(CEFExcessTerm):
         if self.order == 0:
             return coefficient * self.interaction(temperature)
         elif self.order == 1:
-            return coefficient * self.interaction(temperature) * (y_i1 - y_j1)
-        elif self.order == 2:
             return coefficient * self.interaction(temperature) * (y_m2 - y_n2)
+        elif self.order == 2:
+            return coefficient * self.interaction(temperature) * (y_i1 - y_j1)
         else:
             raise ValueError('interaction order larger than 2')
 

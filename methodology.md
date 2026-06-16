@@ -252,7 +252,7 @@ $$
 G^{\mathrm{ex,2pair}}_{M,ab\cdots\underbrace{(ij)}_{(s)}\cdots\underbrace{(mn)}_{(r)}\cdots c}
 = y_a^{(1)}y_b^{(2)}\cdots & (y_i^{(s)}y_j^{(s)})\cdots(y_m^{(r)}y_n^{(r)})\cdots y_c^{(N)} \\
 &\times \left[
-L^{(0)} + (y_i^{(s)}-y_j^{(s)})L^{(1)} + (y_m^{(r)}-y_n^{(r)})L^{(2)} 
+L^{(0)} + (y_m^{(r)}-y_n^{(r)})L^{(1)} + (y_i^{(s)}-y_j^{(s)})L^{(2)} 
 \right]
 \end{align*}
 $$
@@ -269,7 +269,12 @@ v_j = y^{(s)}_j + (1-y^{(s)}_i-y^{(s)}_j-y^{(s)}_k)/3\\
 v_k = y^{(s)}_k + (1-y^{(s)}_i-y^{(s)}_j-y^{(s)}_k)/3
 \end{cases}
 $$
-From this definition, extension to quaternary mixing on the same lattice will be possible.
+From this definition, extension to quaternary mixing on the same lattice will be possible. 
+
+>To be noted:
+> - To make the energy competible to `pycalphad` definition, if only the $L^{(0)}$ term is specified, it will be set that $L^{(0)} = L^{(1)} = L^{(2)}$.
+> - In pycalphad, element order are sorted alphabetically within each sublattice, and this convention is also used.
+> - For two sublattice mixing, convention of the $L^{(1)}$ and $L^{(2)}$ follows implementation of `pycalphad`, which seems to further refers to result from `ThermoCal`.
 
 ---
 
