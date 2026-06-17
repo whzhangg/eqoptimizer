@@ -50,11 +50,13 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
         *,
         n_samples: int = 64,
         tau: float | None = None,
+        use_softmin: bool = True,
         n_steps: int = 6,
         delta: float = 0.3,
         # loss calculation
         relu_margin: float = 0.0,
         unstable_huber_beta: float | None = 1.0,
+        scale_energy_by_rt: bool = True,
         # mu calculation options
         mu_init_lr: float = 5000.0,
         mu_init_max_iter: int = 1000,
@@ -79,8 +81,10 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
         self.elements = tuple(sorted(equilibrium.chemical_system))
         self.n_samples_each_side = n_samples
         self.tau = tau
+        self.use_softmin = use_softmin
         self.relu_margin = relu_margin
         self.unstable_huber_beta = unstable_huber_beta
+        self.scale_energy_by_rt = scale_energy_by_rt
         self.n_steps = n_steps
         self.delta = delta
         self.console = console
@@ -327,7 +331,12 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
             device=DEFAULT_DEVICE,
             dtype=DEFAULT_TYPE,
         )
-        rt = R * temperature
+        if self.scale_energy_by_rt:
+            rt = R * temperature
+            energy_scale = float(rt.detach().cpu())
+        else:
+            rt = 1.0
+            energy_scale = 1.0
         mu_dict = self._current_mu_dict()
 
         phi_by_id = {
@@ -336,6 +345,7 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
                 mu_dict,
                 temperature,
                 tau=self.tau,
+                use_softmin=self.use_softmin,
                 n_samples_each_side=self.n_samples_each_side,
                 n_steps=self.n_steps,
                 delta=self.delta,
@@ -366,7 +376,7 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
                 unstable_penalty = F.smooth_l1_loss(
                     unstable_violation,
                     torch.zeros_like(unstable_violation),
-                    beta=self.unstable_huber_beta / rt,
+                    beta=self.unstable_huber_beta / energy_scale,
                     reduction="sum",
                 )
             unstable_total = unstable_penalty

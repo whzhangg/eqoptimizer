@@ -158,8 +158,10 @@ class OptimizationConfig:
     
     n_samples: int = 64
     tau: float | None = None
+    use_softmin: bool = True
     relu_margin: float = 0.0
     unstable_huber_beta: float | None = 1.0
+    scale_energy_by_rt: bool = True
     n_steps: int = 6
     delta: float = 0.3
 
@@ -232,8 +234,10 @@ class OptimizationState:
                     system,
                     n_samples=config.n_samples,
                     tau=config.tau,
+                    use_softmin=config.use_softmin,
                     relu_margin=config.relu_margin,
                     unstable_huber_beta=config.unstable_huber_beta,
+                    scale_energy_by_rt=config.scale_energy_by_rt,
                     n_steps=config.n_steps,
                     delta=config.delta,
                     mu_init_lr=config.mu_init_lr,
@@ -493,6 +497,8 @@ def optimize_thermodynamic_parameters(
     console.print(f"batch size = {effective_batch_size}")
     console.print(f"sampling density = {config.n_samples}")
     console.print(f"tau = {config.tau}")
+    console.print(f"use softmin = {config.use_softmin}")
+    console.print(f"scale energy by RT = {config.scale_energy_by_rt}")
     console.print(f"unstable huber beta = {config.unstable_huber_beta}")
     console.print(f"exp-gradient steps = {config.n_steps}")
     console.print(f"exp-gradient delta = {config.delta}")

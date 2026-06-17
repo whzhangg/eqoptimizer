@@ -185,8 +185,8 @@ class TDBHandler:
         temperature: float,
         phase_models: PhaseModels | None = None, 
         nsamples: int = 64,
-        composition_atol: float = 1.0e-5,
-        phase_fraction_atol: float = 1.0e-8,
+        composition_atol: float = 1.0e-3,
+        phase_fraction_atol: float = 1.0e-3,
         multiphase_only: bool = True
     ) -> Sequence[PhaseEquilibrium]:
         """Calculate and deduplicate observed phase compositions at a temperature.
@@ -203,103 +203,120 @@ class TDBHandler:
             v.T: temperature, 
         }
         composition_grid = np.linspace(0.0, 1.0, nsamples)
-        for ic in range(len(components)-1):
-            conditions[v.X(components[ic])] = composition_grid
-        
-        eq = equilibrium(
-            self.tdbfilename, comps=self.components, phases=self.phase_names, 
-            conditions=conditions
-        ) 
-        
+
+        if len(components) <= 1:
+            independent_component_sets = [tuple()]
+        else:
+            independent_component_sets = [
+                tuple(
+                    component
+                    for component in components
+                    if component != dependent_component
+                )
+                for dependent_component in components
+            ]
+
         found_equilibrium = []
         found_keys = set()
 
-        phase_values = eq.Phase.values
-        #print(phase_values)
-        phase_fraction_values = eq.NP.values
-        composition_values = eq.X.sel(component=components).values
-        vertex_count = phase_values.shape[-1]
-        grid_shape = phase_values.shape[:-1]
-        #print(vertex_count)
-        #print(grid_shape)
+        for independent_components in independent_component_sets:
+            """in principle, we just need to run once, but pycalphad has some issue with dealing with composition on the boundary, for example, in ternary system, ABC, if A,B is specified, C=0 case may not occur, this is why equilibrium calculation is repeated for each element as the left-out elements. This is not efficient but unfortunately there is little way around easily"""
+            local_conditions = dict(conditions)
+            for component in independent_components:
+                local_conditions[v.X(component)] = composition_grid
 
-        for grid_index in np.ndindex(grid_shape):
-            phase_compositions = []
-            for vertex_index in range(vertex_count):
-                phase_fraction = phase_fraction_values[grid_index + (vertex_index,)]
-                if (
-                    not np.isfinite(phase_fraction)
-                    or phase_fraction <= phase_fraction_atol
-                ):
-                    continue
+            eq = equilibrium(
+                self.tdbfilename, comps=self.components, phases=self.phase_names,
+                conditions=local_conditions,
+            )
 
-                phase_name = str(phase_values[grid_index + (vertex_index,)]).strip()
-                if not phase_name:
-                    continue
+            phase_values = eq.Phase.values
+            phase_fraction_values = eq.NP.values
+            composition_values = eq.X.sel(component=components).values
+            vertex_count = phase_values.shape[-1]
+            grid_shape = phase_values.shape[:-1]
 
-                stoichiometric = phase_model_to_use.get_composition_if_stoichmetric(
-                    phase_name
-                )
-                if stoichiometric is not None:
-                    phase_composition = stoichiometric
-                else:
-                    phase_composition = _composition_from_xarray(
+            for grid_index in np.ndindex(grid_shape):
+                phase_compositions = []
+                for vertex_index in range(vertex_count):
+                    phase_fraction = phase_fraction_values[grid_index + (vertex_index,)]
+                    if (
+                        not np.isfinite(phase_fraction)
+                        or phase_fraction <= phase_fraction_atol
+                    ):
+                        continue
+
+                    phase_name = str(
+                        phase_values[grid_index + (vertex_index,)]
+                    ).strip()
+                    if not phase_name:
+                        continue
+
+                    stoichiometric = phase_model_to_use.get_composition_if_stoichmetric(
+                        phase_name
+                    )
+                    if stoichiometric is not None:
+                        phase_composition = stoichiometric
+                    else:
+                        phase_composition = _composition_from_xarray(
                             composition_values[grid_index + (vertex_index, slice(None))],
                             components,
-                    )
-                phase_compositions.append((phase_name, phase_composition))
-            #print(phase_compositions)
-            if not phase_compositions:
-                continue
+                        )
+                    phase_compositions.append((phase_name, phase_composition))
 
-            if multiphase_only and len(phase_compositions) == 1:
-                continue
+                if not phase_compositions:
+                    continue
 
-            phase_compositions = list(
-                {
-                    _composition_key(
-                        phase_name,
-                        composition,
-                        components,
-                        composition_atol,
-                    ): (phase_name, composition)
-                    for phase_name, composition in phase_compositions
-                }.values()
-            )
+                if multiphase_only and len(phase_compositions) == 1:
+                    continue
 
-            key = _equilibrium_key(
-                phase_compositions,
-                components,
-                composition_atol,
-            )
-            if key in found_keys:
-                continue
+                phase_compositions = list(
+                    {
+                        _composition_key(
+                            phase_name,
+                            composition,
+                            components,
+                            composition_atol,
+                        ): (phase_name, composition)
+                        for phase_name, composition in phase_compositions
+                    }.values()
+                )
 
-            found_keys.add(key)
-            sorted_phase_compositions = sorted(
-                phase_compositions,
-                key=lambda phase_composition: _composition_key(
-                    phase_composition[0],
-                    phase_composition[1],
+                key = _equilibrium_key(
+                    phase_compositions,
                     components,
                     composition_atol,
-                ),
-            )
-            found_equilibrium.append(
-                PhaseEquilibrium(
-                    phases=[
-                        PhaseID(
-                            name=phase_name,
-                            elements=phase_model_to_use.get_phase_elements(phase_name),
-                        )
-                        for phase_name, _ in sorted_phase_compositions
-                    ],
-                    phase_compositions=[
-                        dict(composition)
-                        for _, composition in sorted_phase_compositions
-                    ],
-                    temperature=temperature,
                 )
-            )
+                if key in found_keys:
+                    continue
+
+                found_keys.add(key)
+                sorted_phase_compositions = sorted(
+                    phase_compositions,
+                    key=lambda phase_composition: _composition_key(
+                        phase_composition[0],
+                        phase_composition[1],
+                        components,
+                        composition_atol,
+                    ),
+                )
+                found_equilibrium.append(
+                    PhaseEquilibrium(
+                        phases=[
+                            PhaseID(
+                                name=phase_name,
+                                elements=phase_model_to_use.get_phase_elements(
+                                    phase_name
+                                ),
+                            )
+                            for phase_name, _ in sorted_phase_compositions
+                        ],
+                        phase_compositions=[
+                            dict(composition)
+                            for _, composition in sorted_phase_compositions
+                        ],
+                        temperature=temperature,
+                    )
+                )
 
         return found_equilibrium

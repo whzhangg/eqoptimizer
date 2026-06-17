@@ -469,8 +469,9 @@ class CEF(ThermodynamicModel):
     def grand_potential_per_molar_atom(self, 
         mu: Mapping[str, float], 
         temperature: float, 
-        tau: float | None = None, 
         *,
+        use_softmin: bool = True,
+        tau: float | None = None, 
         n_samples_each_side = 64,
         n_steps: int = 6,
         delta: float = 0.3,
@@ -505,7 +506,9 @@ class CEF(ThermodynamicModel):
                 mu,
                 temperature,
             )
-            return -tau * torch.logsumexp(-values / tau, dim=0)
+            if use_softmin:
+                return -tau * torch.logsumexp(-values / tau, dim=0)
+            return torch.min(values)
 
         y = sampled_y.detach()
         sampling_mu = mu.detach()
@@ -577,7 +580,10 @@ class CEF(ThermodynamicModel):
             mu,
             temperature,
         )
-        return -tau * torch.logsumexp(-values / tau, dim=0)
+        if use_softmin:
+            return -tau * torch.logsumexp(-values / tau, dim=0)
+        else:
+            return torch.min(values)
 
 
     def _exp_gradient_update(
