@@ -1,20 +1,16 @@
-
-# Introduction
-
-
 # Methodology
 
 ## Equilibrium condition
 
-In this project, we consider the optimization of parameters of thermodynamic *models* given by:
+In this project, we consider thermodynamic *models* for a phase $\alpha$ with which energy can be calculated from input variables $T$, $P$ and internal coordinate $\mathbf{y}^{\alpha}$. The model is parameterized by $\mathbb{W}^{\alpha}$:
 $$
 G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha})
 $$
-where $\mathbf{y}^{\alpha}$ are internal coordinates of the phase $\alpha$ which may need to satisfy a series of constraints: 
+The internal coordinates of the phase $\alpha$ may be required to satisfy a series of constraints: 
 $$
 C_1^{\alpha}(\mathbf{y}^{\alpha}) = 0,\quad C_2^{\alpha}(\mathbf{y}^{\alpha}) = 0,\quad \cdots
 $$
-The subscript $M$ in $G_M$ indicate that this value $G_M$ is defined for one molar of the cell, in which vacancy could occupy some sites. The amount of chemical species in one molar of the same cell is given by functions:
+The subscript $M$ in $G_M$ indicate that this value $G_M$ is defined for one molar of the cell, in which vacancy could occupy some sites. The amount of chemical species in one molar of the same cell is given as functions of internal coordinates:
 $$
 M_{A}^{\alpha} = M_{A}^{\alpha}(\mathbf{y}^{\alpha});\quad
 M_{B}^{\alpha} = M_{B}^{\alpha}(\mathbf{y}^{\alpha});\quad\cdots
@@ -24,31 +20,10 @@ $$
 G_m^{\alpha} = \frac{G_M^{\alpha}}{M^{\alpha}}
 $$
 
-The equilibrium at given temperature $\mathbb{T}$, pressure $\mathbb{T}$ and total number of atoms for each element $A$: $\mathbb{N}_A$ can be obtained by minimizing thermodynamic model with respect to constraints, from which we can obtain the Gibbs energy:
+We use black-bold to denote independent control variables. We consider a set of phases $\alpha, \beta, \gamma, \delta\cdots$ with phase fraction $\mathcal{N}^{\alpha}, \mathcal{N}^{\beta}\cdots$.
+The global equilibrium at given temperature $\mathbb{T}$, pressure $\mathbb{P}$ and total number of atoms for each element $A$: $\mathbb{N}_A$ can be obtained by minimizing thermodynamic model with respect to the constraints:
 $$
-\mathbf{G}(\mathbb{N}, \mathbb{T}, \mathbb{P}) = \min_{(\mathbf{y},T,P)} G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha}) \quad\text{subject to}
-\begin{cases}
-T = \mathbb{T}\\
-P = \mathbb{P}\\
-M_{i}^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{N}_i \quad i\in\{A,B,\cdots\} \\
-C_1^{\alpha}(\mathbf{y}^{\alpha}) = 0, \cdots
-\end{cases}
-$$
-where we use black-bold letters to denote external variables. $T$ and $P$ are trivally solved. The minimization can be done by finding the stationary point of the Lagrange:
-$$
-L(\mathbf{y}^{\alpha},\boldsymbol{\mu},\boldsymbol{\zeta}) = G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) + \sum_A \mu_A [\mathbb{N}_A-M_{A}^{\alpha}(\mathbf{y}^{\alpha})] + \sum_k \zeta_k C_k^{\alpha}(\mathbf{y}^{\alpha})
-$$
-where $\boldsymbol{\mu}$ and $\boldsymbol{\zeta}$ are lagrange multiplier for the mass balance constraints and constraints on $\mathbf{y}$. $\boldsymbol{\mu}$ can be shown to be the chemical potential. The equilibrium condition is thus:
-- For each $y_i$:
-    $$
-    \frac{\partial G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})}{\partial y_i} - \sum_A \mu_A \frac{\partial M_{A}^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i} + \sum_k \zeta_k \frac{C_k^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i} = 0
-    $$
-- For each component $A$, we require mass balance: $\mathbb{N}_A-M_{A}^{\alpha}(\mathbf{y}^{\alpha}) = 0$
-- For each constraints on $\mathbf{y}^{\alpha}$ should be satisfied : $C_k^{\alpha}(\mathbf{y}^{\alpha}) = 0$
-
-If we have multiply phase in equilibrium with phase fraction $\mathcal{N}^{\alpha},\mathcal{N}^{\beta},\cdots$, the equilibrium is given by:
-$$
-\mathbf{G}(\mathbb{N}, \mathbb{T}, \mathbb{P}) = \min_{(\mathbf{y},\mathcal{N},T,P)} \left[\sum_{\alpha} \mathcal{N}^{\alpha} G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha})\right] \quad\text{subject to}
+\mathbf{G}(\mathbb{N}, \mathbb{T}, \mathbb{P}) = \min_{(\mathcal{N}\ge 0,\mathbf{y},T,P)} \left[\sum_{\alpha} \mathcal{N}^{\alpha} G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha})\right] \quad\text{subject to}
 \begin{cases}
 T = \mathbb{T}\\
 P = \mathbb{P}\\
@@ -56,172 +31,117 @@ P = \mathbb{P}\\
 C_1^{\alpha}(\mathbf{y}^{\alpha}) = 0, \cdots
 \end{cases}
 $$
-with the following equilibrium condition:
-- For each $y_i$:
+It is important to note that we also have inequality constraint $\mathcal{N}\ge 0$. The minimization problem can be solved by found by finding the stationary point of the Largrangian:
 $$
-\mathcal{N}^{\alpha}  \left[\frac{\partial G^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})}{\partial y_i^{\alpha}} - \sum_{A} \mu_A \frac{\partial M_{A}^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i^{\alpha}} \right] + \sum_k \zeta_k \frac{C_k^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i^{\alpha}} = 0
+\begin{align*}
+L &=\sum_{\alpha} \mathcal{N}^{\alpha} G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})
++ \sum_A \mu_A \left[ \mathbb{N}_A-\sum_{\alpha}\mathcal{N}^{\alpha} M_{A}^{\alpha}(\mathbf{y}^{\alpha}) \right] + \sum_{\alpha} \sum_k \zeta_k^{\alpha} C_k^{\alpha}(\mathbf{y}^{\alpha}) \\
+& = \sum_{\alpha} \mathcal{N}^{\alpha} \Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})
++ \sum_A \mu_A \mathbb{N}_A + \sum_{\alpha} \sum_k \zeta_k^{\alpha} C_k^{\alpha}(\mathbf{y}^{\alpha})
+\end{align*}
 $$
-- For each phase $\alpha$:
+where $T=\mathbb{T}$ and $P=\mathbb{P}$ is solved trivally and is inserted into the Lagrangian. $\boldsymbol{\mu}$ and $\boldsymbol{\zeta}$ are lagrange multiplier for the mass balance constraints and constraints on $\mathbf{y}$. Furthermore, $\boldsymbol{\mu}$ can be shown to be the chemical potential. We have defined a quantity $\Phi$:
 $$
-G^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mu_A M_{A}^{\alpha}(\mathbf{y}^{\alpha}) = 0
+\Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})
+= G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mu_A M_{A}^{\alpha}(\mathbf{y}^{\alpha})
 $$
-- Constraints $\sum_{\alpha}\mathcal{N}^{\alpha} M_{A}^{\alpha}(\mathbf{y}^{\alpha}) - \mathbb{N}_A = 0$ for each components $A$ and $C_k^{\alpha}(\mathbf{y}^{\alpha}) = 0$ for each constraints $k$. 
-
-Typically, such non-linear system of equations are solved using Newton's method to find internal coordinates of phases as well as phase fraction if we have a multi-phase equilibrium. Furthermore, the chemical potentials are solved at the same time as Lagrange multiplier. Therefore, chemical potential can be written as a function: $\boldsymbol{\mu}=\boldsymbol{\mu}(\mathbb{T},\mathbb{P},\mathbb{W})$.
-
-If we observed an experimental equilibrium, these equilibrium conditions much be satisfied. **Therefore, loss function can be defined, in terms of the above equilibrium condition, to measure whether the observed data is reproduced by a set of model parameters $\mathbb{W}$ at a given temperature and pressure.**
-
-### Loss Functions
-
-In the following, we assume that at any point, constraints on $\mathbf{y}$ are satisfied. Then, the term $C(\mathbf{y})$ no longer appear in the Lagrange. Furthermore, since experimental data typically contain only composition of each phases $(\mathbb{N}^{\alpha}_A,\mathbb{N}^{\alpha}_B,\cdots)$ in equilibrium without a global composition or phase fraction, the global mass balance constraints are also removed. In the end, the equilibrium condition is:
+The stationary point is given by:
 $$
-\frac{\partial G^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})}{\partial y_i^{\alpha}} - \sum_{A} \mu_A \frac{\partial M_{A}^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i^{\alpha}} = 0 \\
-G^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mu_A M_{A}^{\alpha}(\mathbf{y}^{\alpha}) = 0 \quad \to\quad 
-\boxed{\mathbf{G}^{\alpha}_m (\mathbb{N}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mu_A \mathbb{N}^{\alpha}_A = 0}
+\begin{gather}
+\frac{\partial L}{\partial \mathcal{N}^{\alpha}} = \Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) \begin{cases}=0\quad \text{if $\mathcal{N}^{\alpha}>0$}\\
+> 0 \quad \text{if $\mathcal{N}^{\alpha}=0$} \end{cases} \\
+\frac{\partial L}{\partial y_i^{\alpha}} = \mathcal{N}^{\alpha} \frac{\partial \Phi_M^{\alpha}}{\partial y_i^{\alpha}} + \sum_k \zeta_k \frac{C_k^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i} = 0 \\
+\frac{\partial L}{\partial \mu_A}=\sum_{\alpha}\mathcal{N}^{\alpha} M_{A}^{\alpha}(\mathbf{y}^{\alpha}) - \mathbb{N}_A = 0\quad\quad 
+\frac{\partial L}{\partial \zeta_k^{\alpha}}=C_k^{\alpha}(\mathbf{y}^{\alpha}) = 0
+\end{gather}
 $$
-where $\mathbf{y}$ and $\boldsymbol{\mu}$ correspond to optimzied value, and for each phase $\alpha$, the following relationship is satisfied: $\mathbb{N}^{\alpha}_i = M_i^{\alpha}(\mathbf{y}^{\alpha})$. The first equation above, on the other hand, also defines a minimal of a thermodynamic potential $\Phi^{\alpha}$:
-$$
-\Phi^{\alpha}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \min_{\mathbf{y}^{\alpha}} \left[\mathbf{G}^{\alpha}_m (\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mathbb{U}_A M_{A}^{\alpha}(\mathbf{y}^{\alpha})\right]
-$$
-and we have treated chemical potential solved at equilibrium as external control parameter. This is similar to obtain the grand potential $\Phi(\mathbb{U},\mathbb{T},\mathbb{V})$ from Helmholtz potential $F(\mathbb{N},\mathbb{T},\mathbb{V})$ by Legendre transformation. For stable phases in equilibrium, we require, at equilibrium:
-$$
-\Phi^{\alpha}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \Phi^{\beta}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \cdots = 0
-$$ 
-and for unstable phases, we require:
-$$
-\Phi^{\gamma}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) > 0
-$$
-In summary, at equilibrium, knowing the composition of each phases, we have require the following condition to be satisfied:
+where we note that for stable phase with $\mathcal{N}>0$, we require $\Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})=0$, but for unstable phase, this condition does not need to be satisfied. However, since the internal coordinates for phases with $\mathcal{N}=0$ cannot be uniquely determined, the condition for a phase $\gamma$ to be unstable is that:
 $$
 \boxed{
-\begin{gather*}
-\mathbf{G}^{\alpha}_m (\mathbb{N}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A} \mathbb{U}_A \mathbb{N}^{\alpha}_A = 0 \\
-\Phi^{\alpha}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \Phi^{\beta}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \cdots = 0 \quad\text{for stable phases}\\
-\Phi^{\gamma}(\mathbb{U}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) > 0 \quad\text{for unstable phases} 
-\end{gather*}
+\min_{\mathbf{y}^{\gamma}} \Phi_M^{\gamma}(\mathbf{y}^{\gamma},\mu,\mathbb{T}, \mathbb{P},\mathbb{W}^{\gamma}) > 0 \quad\quad \text{subject to constraints}
 }
 $$
-which can be used to solve thermodynamic parameters $\mathbb{W}$ and $\mathbb{U}$, where $\mathbf{G}^{\alpha}_m$ is Gibbs energy of a phase at given composition, and $\Phi^{\alpha}$ is the grand potential term defined above.
+On the other hand, for a stable phase $\alpha$, if we determine the following quantity at the determined chemical potential $\mu$:
+$$
+\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\mu,\mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) \quad\quad \text{subject to constraints}
+$$
+we find the solution is given the stationary point:
+$$
+\frac{\partial \Phi_M^{\alpha}}{\partial y_i^{\alpha}} + \sum_k \zeta_k \frac{\partial C_k^{\alpha} (\mathbf{y}^{\alpha})}{\partial y_i^{\alpha}} = 0 \quad\text{and}\quad C_k^{\alpha} (\mathbf{y}^{\alpha})=0
+$$
+which is just equation (2) in the equilibrium condition with a factor. So we see that the internal coordinate $\mathbf{y}^{\alpha}$ solved from the the global phase equilibrium also minimizes $\Phi_M^{\alpha}$. Therefore, we can combine the equilibrium conditions (1) and (2) to give the equilibrium condition for a stable phase:
+$$
+\boxed{
+\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\mu,\mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})=0 \quad\quad \text{subject to constraints}
+}
+$$
+The two boxed equation are equivalent condition to equilibrium condition (1) and (2). Together with the mass balance constraints, they allow us to determine the internal coordinate $\mathbf{y}$ and $\boldsymbol{\mu}$. 
 
----
+## Loss Functions
 
-In this project, we consider the optimization of parameters of thermodynamic *models* given by:
-$$
-G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})
-$$
-where $\mathbf{y}^{\alpha}$ are internal coordinates of the phase $\alpha$. We use blackboard letter as external controbl variables that specified thermodynamic constraints such as $\mathbb{T}$ and $\mathbb{P}$, in constrast with internal variables $\mathbf{y}$. Thermodynamic parameters are denoted as $\mathbb{W}^{\alpha}$. The subscript $M$ indicate that this value $G_M$ is defined for one molar of the cell, in which vacancy could occupy some sites. The amount of chemical species in one molar of the same cell is given by:
-$$
-M_{A}^{\alpha} = M_{A}^{\alpha}(\mathbf{y}^{\alpha});\quad
-M_{B}^{\alpha} = M_{B}^{\alpha}(\mathbf{y}^{\alpha});\quad\cdots
-$$
-The total amount of chemical species is: $M^{\alpha} = \sum_{i\neq \mathrm{Vac}} M_i^{\alpha}$ and from this, we can calculate thermodynamic properties per atom:
-$$
-G_m^{\alpha} = \frac{G_M^{\alpha}}{M^{\alpha}}
-$$
+### Definition
 
-At a multi-phase equilibrium, all stable phases share the same chemical potential $\mu_A, \mu_B,\cdots$ where $A$, $B$ and so on index elements. For any phase, we can check if it can be in equilibrium with the system by calculating its grand potential $\Phi_m^{\alpha}$ at these chemical potentials by:
+Typically, experimental phase equilibrium data are given by the measured compositions of phases in equililibrum: 
 $$
-\Phi_m^{\alpha}(\mathbb{U},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) = \min_{\mathbf{y}} \left[ \frac{G_M^{\alpha}(\mathbf{y},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mathbb{U}_A M_A^{\alpha}(\mathbf{y})}{M^{\alpha}(\mathbf{y}_j)} \right]
-$$
-and:
-$$
-\begin{align*}
-\Phi_m^{\alpha} = \Phi_m^{\beta} = \cdots = 0\quad&\text{for stable phases} \\
-\Phi_m^{\gamma} > 0\quad&\text{for unstable phases} \\
-\end{align*}
-$$
-
-On the other hand, at equilibrium, the equilibrium composition are related to the chemical potentials themselves by the equilibrium condition:
-$$
-\begin{gather*}
-\mathbf{G}_M^{\alpha} (\mathbb{M}^{\alpha},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A}\mu_A \mathbb{M}_A^{\alpha} = 0 \\
-\mathbf{G}_M^{\beta} (\mathbb{M}^{\beta},\mathbb{T},\mathbb{P},\mathbb{W}^{\beta})- \sum_{A}\mu_A \mathbb{M}_A^{\beta} = 0 \\
+(\mathbb{M}_A^{\alpha},\mathbb{M}_b^{\alpha},\cdots),
+(\mathbb{M}_A^{\beta},\mathbb{M}_b^{\beta},\cdots),
 \cdots
-\end{gather*}
+$$ 
+If the experimental equilibrium is indeed reproduced by the thermodynamic model, then, the internal coordinates that satisfy the equilibrium conditions should also satisfy:
 $$
-where $\mathbf{G}_M^{\alpha} (\mathbb{M}^{\alpha},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha})$ is the single phase Gibbs energy subject to external condition $\mathbb{T}$, $\mathbb{P}$ and the given amount of species $\mathbb{M}^{\alpha}$.
-
-The above formulation gives a definition for loss function which should reach zero when the equilibrium is reached. Given a set of chemical potential $\boldsymbol{\mu}$, we calculate the grand potential $\Phi_m^{\alpha,\beta,\cdots}$ for all phases present. For the observed stable phases, we require that their grand potential is zero:
+M_A^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{M}_A^{\alpha} \cdots
 $$
-l_1(\mathbb{W},\boldsymbol{\mu}) = \sum_{\alpha\in\mathrm{observed}} \left|\frac{\Phi_m^{\alpha}}{R\mathbb{T}}\right|^2 \to 0
+On the other hand, deviation from equilibrium can be measured also using the equilibrium condition, but at constrained composition of each observed phase. Since the chemical potential is also unknown, we set auxiliary chemical potential vectors $\boldsymbol{\mu}'$ for this phase equilibrium. For the set of chemical potential, we find deviation to the observed phase equilibrium:
 $$
-At the same time, since no phase should have grand potential less than zero, for both observed and unobserved phases, we define the penalty, which is zero if $\Phi_m>0$:
+\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})\neq0 \quad\quad \text{subject to $C_k^{\alpha}$}
 $$
-l_2(\mathbb{W},\boldsymbol{\mu}) = \sum_{\beta} \mathrm{ReLU}\left(-\frac{\Phi_m^{\beta}}{R\mathbb{T}}\right) \to 0
+Furthermore, solving $\mathbf{y}$ in above term should reproduce the observed equilibrium composition. If the above term is computed at the constrained composition $M_A^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{M}_A^{\alpha}$ and so on, we find that locally:
 $$
-A scaling with temperature is used in "rough search" in PANDAT and is also introduced here. The chemical potential $\boldsymbol{\mu}$ can be obtained using the equilibrium condition. If $N$ phase are in equilibrium in a $N$ component system (eg. two-phase equilibrium in a binary system, three-phase equilibrium in a ternary system), the chemical potential are uniquely determined from the Gibbs energy $\mathbf{G}_M^{\alpha},\cdots$. In other cases (eg. two-phase equilibrium in a ternary system), we define auxiliary chemical potential vectors $(\mu_A, \mu_B, \cdots)$ for each phase equilibrium, which is minimized during the optimization so that:
+\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) = 
+\min_{\mathbf{y}^{\alpha}} G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{M}_{A}^{\alpha}
+= \mathbf{G}_M^{\alpha}(\mathbb{M}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{M}_{A}^{\alpha}
 $$
-l_0(\mathbb{W},\boldsymbol{\mu}) = \sum_{\alpha\in\mathrm{observed}} \left[\frac{\mathbf{G}_M^{\alpha} (\mathbb{M}^{\alpha},\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_{A}\mu_A \mathbb{M}_A^{\alpha}}{(\sum_A \mathbb{M}_A^{\alpha}) R\mathbb{T}}\right]^2 \to 0
+where the first term is composition constrained Gibbs energy. For unobserved phase $\gamma$, we still require that:
 $$
-The final loss function, for a single phase equilibrium $\varepsilon$, can thus be written as:
+\min_{\mathbf{y}^{\gamma}} \Phi_M^{\gamma}(\mathbf{y}^{\gamma},\boldsymbol{\mu}',\mathbb{T}, \mathbb{P},\mathbb{W}^{\gamma}) > 0
 $$
-l_{\varepsilon}(\mathbb{W},\boldsymbol{\mu}_{\varepsilon}) = \begin{cases}
-\lambda_1 l_1 + \lambda_2 l_2 & \text{if $\boldsymbol{\mu}$ can be determined from $\mathbf{G}_M$} \\
-\lambda_0 l_0 + \lambda_1 l_1 + \lambda_2 l_2 & \text{otherwise}
-\end{cases}
-$$
-where we have added a regularization loss $l_{\mathrm{reg}}$, and $\lambda$ are loss weights. The total loss with respect to all considered phase equilibrium, plus a regularization term, can be written as:
-$$
-l_{\mathrm{tot}} = \sum_{\varepsilon} l_{\varepsilon}(\mathbb{W},\mu_{\varepsilon}) + \lambda_4 l_{\mathrm{reg}}(\mathbb{W})
-$$
-This loss function should be minimized with respect to the thermodynamic parameter $\mathbb{W}$ and possible auxiliary chemical potential $\mu$ defined for each phase equilibria. A possible regularization loss is: $l_{\mathrm{reg}} = \sum_i |\Delta w_i|^2$, where $\Delta w_i$ is the change of parameters, which follows if expected changes are zero centered.
-
-Before the optimization of thermodynamic parameter $\mathbb{W}$, it maybe benefitial to obtain a good estimate of chemical potential for each phase equilibrium if they are not uniquely determined from the Gibbs energy. It can be done by:
-$$
-\boldsymbol{\mu}_0 = \arg\min_{\boldsymbol{\mu}} [\lambda_0 l_0 + \lambda_1 l_1 + \lambda_2 l_2]
-$$
-
-### Constrained minimization of gibbs energy
-
-To find the internal coordinate $\mathbf{y}_i^{\alpha}$ that minimizes the Gibbs energy at the observed composition, we have used used constraint minimization routine "SLSQP" implemented in `SciPy.optimize.minimize`. Gradient calculated from auto-differentiation is used in the optimization.
-
-### Efficient determination of grand potential
-
-In minimization, grand potential for all possible phases need to be evaluated. Thus, we want to be able to determine the grand potential efficient. One approach is to use a $\mathrm{Softmin}$ function (defined as "LogSumExp") instead of $\min$.
-$$
-\Phi_m^{\alpha} = -\tau \log \sum_{j} \exp\left[-\frac{\mathbf{G}_M^{\alpha}(\mathbf{y}_j,\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mathbb{U}_A M_A^{\alpha}(\mathbf{y}_j)}{\tau M^{\alpha}(\mathbf{y}_j)}\right]
-$$
-The $\mathrm{Softmin}$ function has the following property, for a sequence of $n$ points $\mathbf{x} = (x_1,x_2,\cdots)$
-$$
-\mathrm{Softmin}(\mathbf{x},\tau) = -\tau \log\sum_j \exp\left[-\frac{x_j}{\tau}\right] 
-$$
-is always smaller than the true minimal and is bounded by:
-$$
-\min(\mathbf{x}) - \tau \log(n) \leq \mathrm{Softmin}(\mathbf{x},\tau) < \min(\mathbf{x})
-$$
-The more points we sample, the larger estimation error we will have. If we set an upper bound for error for example $1\, \mathrm{J/mol}$, we can set $\tau\approx 1/\log(n)$. However, if we do not sample densely, we could miss the energy minimal. To sample vector in simplex sample, Dirichlet distribution can be used.
-
-On the other hand, sampling is very important to ensure the accuracy of softmin. A dense uniform sample can still lead to bad estimation of minimum. For example, if an intermetallic phase have narrow composition region but quite a few internal degrees of freedom, it is will be difficult to find samples that in that possible region. To have a better approximation of minimum. We can take the following approach:
-$$
-\text{Dirichlet sampling of $\mathrm{y}$} \to \text{Local gradient descent} \to \text{Softmin}
-$$
-We consider the gradient descent step. In CEF, the grand potential term is a function on direct sum of simplex. Consider a function on a simplex $w$, minimization can be done using the exponential gradient descent:
-$$
-w_i^{(t+1)} = \frac{w_i^{(t)}\exp(-\eta g_i^{t})}{\sum_j w_j^{(t)}\exp(-\eta g_j^{t})}
-$$
-where $\eta$ is a step size parameter. $w^{t+1}$ remain in the simplex space. When $\eta\to 0$, we have:
-$$
-\exp(-\eta g) \approx 1-\eta g
-$$
-and therefore
+with the auxiliary chemical potential. The total deviation can be measured as follows:
 $$
 \begin{align*}
-w_i' \approx w_i \frac{1-\eta g_i}{\sum_j w_j - \eta \sum_j w_j g_j} 
-&= w_i \frac{1-\eta g_i}{1 - \eta \bar{g}} \\
-&\approx w_i (1-ng_i)(1+n\bar{g}) \approx w_i[1-\eta( g_i-\bar{g})]
+\mathcal{L}(\boldsymbol{\mu}',\mathbb{W}) &= \sum_{\alpha\in\text{stable}} \left[\mathbf{G}_M^{\alpha}(\mathbb{M}^{\alpha}, \mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{M}_{A}^{\alpha}\right]^2 \\ &+ 
+\sum_{\alpha\in\text{stable}} \left[\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{W}^{\alpha})\right]^2 + \sum_{\gamma\notin\text{stable}} \mathrm{ReLU}\left[-\min_{\mathbf{y}^{\gamma}} \Phi_M^{\gamma}(\mathbf{y}^{\gamma},\boldsymbol{\mu}',\mathbb{W}^{\gamma})\right]
 \end{align*}
 $$
-to the first order in $\eta$. Therefore, $\Delta w_i\approx -\eta w_i (g_i-\bar{g})$ If we want the maximal step size to be approximately $\delta$, then we can choose $\eta$:
+at a given auxiliary chemical potential and thermodynamic parameters $\mathbb{W}$. The auxiliary chemical potential need to be optimized so that:
 $$
-\eta \approx \frac{\delta}{\max_i w_i |g_i -\bar{g}| + \epsilon}
+\mathcal{L}(\mathbb{W}) = \min_{\boldsymbol{\mu}'} \mathcal{L}(\boldsymbol{\mu}',\mathbb{W}) \to 0
 $$
-A suitable step size would perhaps be 0.4 and total number of step $6$. The longer the update step, minimal can the calculated more accurately.
+which should be zero when the experimentally observed phase equilibrium is reproduced by model parameter $\mathbb{W}$. Optimized thermodynamic parameter can be found by minimizing $\mathcal{L}(\boldsymbol{\mu}',\mathbb{W})$ with respect to $\mathbb{W}$ and $\boldsymbol{\mu}'$ at the same time.
 
-### Thermodynamic Models
+### Constraining auxiliary chemical potential
 
-To calculate the above loss function, thermodynamic model need to be able to calculate Gibbs energy at a given chemical composition $\mathbb{M}$ and to calculate grand-potential $\Phi$ at a given chemical potential $\mathbb{U}$. As long as a model satisfy such requirement, it can be used to calculate the above loss function. By using the $\mathrm{Softmin}$, grand-potential term $\Phi$ can be calculated as long as the model provide a dense sampling of its internal coordinate $\mathbf{x}$. Some examples are given below. For simplicity, we ignore the model dependence on $\mathbb{P}$:
+When the number of phases in equilibrium is equal to the number of chemical components. The requirement that $\sum_{\alpha\in\text{stable}} \left[\mathbf{G}_M^{\alpha}(\mathbb{M}^{\alpha}, \mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{M}_{A}^{\alpha}\right]^2 = 0$ leads to a set of linear equation from which auxiliary chemical potential can be solved. For example, in a binary system, knowing the composition and composition constrained Gibbs energy of two phases allow us to define a chemical potential hyper-plane (a line in the case of binary system) that pass throughs both points. In such case, chemical potential are a function of model parameter $\mathbb{W}$ through its dependence on the Gibbs energy. 
 
-#### Compound Energy Formalism (CEF)
+However, this is not in general possible. Consider a two phase equilibrium in a ternary system. Two points in the energy composition space cannot uniquely define the chemical potential hyperplane. However, the hyperplane can be constrained to cross these two points, so that only one degree of freedom need to be introduced to define the auxiliary potential. This allow us to reduce the number of auxiliary potential term in the minimization.
+
+### Envelope theorem
+
+It can be noted that to calculate the loss function, it is necessary to solve the $\mathbf{y}$ that minimizes the constrained Gibbs energy as well as unconstrained grand potential. Since the optimized $\mathbf{y}$ are a function of $\mathbb{W}$, it may seems that the derivative of the loss with respect to $\mathbb{W}$ require the derivative of $\mathbf{y}$ with respect to $\mathbb{W}$, which require auto-differentiation through the optimization of $\mathbf{y}$. However, this can be avoided by using the envelope theorem. To calculate the derivative of loss $\mathcal{L}$ with respect to parameters $\mathbb{W}$, it is only necessary to use the solved $\mathbf{y}$ as input. The internal coordinates of the phases depends on the details of the model and should allow the description of all possible states in the phase space. In phenomenological CALPHAD models with fixed lattice, internal coordinates are usually the occupancy of components on the defined sublattices. 
+
+### Final form
+
+By constraining the auxiliary chemical potential, the first term in the loss function disappears. Furthermore, we can normalize the energy terms by $R\mathbb{T}$ and the total number of components ($\Phi_M \to \Phi_m$), to obtain the following loss function:
+$$
+\mathcal{L}(\boldsymbol{\mu}',\mathbb{W}) =
+\lambda_1 \sum_{\alpha\in\text{stable}} \left[\frac{\min_{\mathbf{y}^{\alpha}} \Phi_m^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{W}^{\alpha})}{R\mathbb{T}}\right]^2 + \lambda_2 \sum_{\gamma\in\text{all}} \mathrm{ReLU}\left[-\frac{\min_{\mathbf{y}^{\gamma}} \Phi_m^{\gamma}(\mathbf{y}^{\gamma},\boldsymbol{\mu}',\mathbb{W}^{\gamma})}{R\mathbb{T}}\right] + \lambda_3 l_{\mathrm{reg}}(\mathbb{W})
+$$
+where the last term is a regularization term. A possible regularization loss is: $l_{\mathrm{reg}} = \sum_i |w_i-\bar{w}_i|^2$, which follows if the prior of the parameter are centered at $\bar{w}_i$. Furthermore, we have also included observed phases in the second term, which does not have any impact for the final results but is found to help optimization.
+
+## Thermodynamic Models
+
+To describe a thermodynamic systems, it is necessary for the model to provide free energy for all possible phases. In the CALPHAD approach, each phase has their own thermodynamic model with different parameters and the thermodynamic system is just an ensemble of defined models. However, it is also possible that a global model provide thermodynamic description of all phases, which will be the case of machine learning interatomic potential.
+
+### Compound energy formalism
 
 In the compound energy formalism description, we define the site fraction for sublattice $s$ of element $A$ whose value is between 0 and 1:
 $$
@@ -271,16 +191,66 @@ v_k = y^{(s)}_k + (1-y^{(s)}_i-y^{(s)}_j-y^{(s)}_k)/3
 $$
 From this definition, extension to quaternary mixing on the same lattice will be possible. 
 
->To be noted:
-> - To make the energy competible to `pycalphad` definition, if only the $L^{(0)}$ term is specified, it will be set that $L^{(0)} = L^{(1)} = L^{(2)}$.
-> - In pycalphad, element order are sorted alphabetically within each sublattice, and this convention is also used.
-> - For two sublattice mixing, convention of the $L^{(1)}$ and $L^{(2)}$ follows implementation of `pycalphad`, which seems to further refers to result from `ThermoCal`.
+Implementation notes:
+- To make the energy competible to `pycalphad` definition, if only the $L^{(0)}$ term is specified, it will be set that $L^{(0)} = L^{(1)} = L^{(2)}$.
+- In pycalphad, element order are sorted alphabetically within each sublattice, and this convention is also used.
+- For two sublattice mixing, convention of the $L^{(1)}$ and $L^{(2)}$ follows implementation of `pycalphad`, which seems to further refers to result from `ThermoCal`.
 
----
+#### Constrained minimization of gibbs energy
 
-### Supplementary
+To find the internal coordinate $\mathbf{y}_i^{\alpha}$ that minimizes the Gibbs energy at the observed composition, we have used used constraint minimization routine "SLSQP" implemented in `SciPy.optimize.minimize`. Gradient calculated from auto-differentiation is used in the minimization. The resulting $\mathbf{y}$ is then inserted to compute the loss function. In terms of CEF, the starting point of the minimization is when the site fraction on each sublattice is set to correspond to the composition of the phase.
 
-#### Weights in the loss function
+#### Determination of grand potential
+
+The grand potential is only constrained in terms of the internal coordinates but not by external variables, utilizing the fact that site fraction $\mathbf{y}$ are all positive and sums up to 1.0, the minimization can be performed using exponential gradient descent. To find the coordinates that minimizes the grand potential. We consider the following approach:
+$$
+\text{Dirichlet sampling of $\mathrm{y}$} \to \text{Local gradient descent} \to \text{Softmin}
+$$
+Dirichlet sampling enable a uniform sampling on the simplex space. Next, gradient descent steps are performed for each of the sampled points. In CEF, the grand potential term is a function on direct sum of simplex. Consider a function on $w$ in a simplex, minimization can be done using the exponential gradient descent:
+$$
+w_i^{(t+1)} = \frac{w_i^{(t)}\exp(-\eta g_i^{t})}{\sum_j w_j^{(t)}\exp(-\eta g_j^{t})}
+$$
+where $g_i$ is the gradient and $\eta$ is a step size parameter. It can be verified that $w^{t+1}$ remain in the simplex space. Finally, the minimal value can be found by either using
+$$
+\Phi = \Phi(\mathbf{y} = \arg\min_{\mathbf{y}}\Phi)
+$$
+or by the $\mathrm{Softmin}$ function (defined as "LogSumExp").
+$$
+\Phi_m^{\alpha} = -\tau \log \sum_{j} \exp\left[-\frac{\mathbf{G}_M^{\alpha}(\mathbf{y}_j,\mathbb{T},\mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mathbb{U}_A M_A^{\alpha}(\mathbf{y}_j)}{\tau M^{\alpha}(\mathbf{y}_j)}\right]
+$$
+The $\mathrm{Softmin}$ function has the following property, for a sequence of $n$ points $\mathbf{x} = (x_1,x_2,\cdots)$
+$$
+\mathrm{Softmin}(\mathbf{x},\tau) = -\tau \log\sum_j \exp\left[-\frac{x_j}{\tau}\right] 
+$$
+is always smaller than the true minimal and is bounded by:
+$$
+\min(\mathbf{x}) - \tau \log(n) \leq \mathrm{Softmin}(\mathbf{x},\tau) < \min(\mathbf{x})
+$$
+The more points we sample, the larger estimation error we will have. If we set an upper bound for error for example $1\, \mathrm{J/mol}$, we can set $\tau\approx 1/\log(n)$.
+
+#### Step size of exponential gradient descent
+
+In the exponential gradient descent, when $\eta\to 0$, we have:
+$$
+\exp(-\eta g) \approx 1-\eta g
+$$
+and therefore
+$$
+\begin{align*}
+w_i' \approx w_i \frac{1-\eta g_i}{\sum_j w_j - \eta \sum_j w_j g_j} 
+&= w_i \frac{1-\eta g_i}{1 - \eta \bar{g}} \\
+&\approx w_i (1-ng_i)(1+n\bar{g}) \approx w_i[1-\eta( g_i-\bar{g})]
+\end{align*}
+$$
+to the first order in $\eta$. Therefore, $\Delta w_i\approx -\eta w_i (g_i-\bar{g})$ If we want the maximal step size to be approximately $\delta$, then we can choose $\eta$:
+$$
+\eta \approx \frac{\delta}{\max_i w_i |g_i -\bar{g}| + \epsilon}
+$$
+A suitable step size would perhaps be 0.4 and total number of step $6$. The longer the update step, minimal can the calculated more accurately.
+
+## Supplementary
+
+### Weights in the loss function
 
 Maximum a posteriori estimate of model parameter gives the form of loss function:
 $$
@@ -297,7 +267,7 @@ $$
 $$
 In such case, roughly, we can set $s$ to be about $2000$ J/mol and we have $\lambda_3/\lambda_1$ at the order of $10^{-11}$.
 
-#### Exponential gradient descent
+### Exponential gradient descent
 
 For ordinary gradient descent, $\mathbf{x}^{t+1} = \mathbf{x}^{t} - \eta \mathbf{g}$, where $\mathbf{g}$ is the gradient of the target function $f$, it can be equivalent be expressed as a minimization problem [[cmu](https://www.cs.cmu.edu/afs/cs.cmu.edu/academic/class/15850-f20/www/notes/lec19.pdf),[Zeyuan](https://arxiv.org/abs/1407.1537),[Bubeck](https://www.google.com/url?sa=t&source=web&rct=j&opi=89978449&url=http://sbubeck.com/Bubeck15.pdf&ved=2ahUKEwjF-NL6gO-UAxVwjK8BHYSMDtsQFnoECAsQAQ&usg=AOvVaw0ZKZnTafCWEWxqWr1Bxjox),[Sham Kakade](https://homes.cs.washington.edu/~sham/courses/stat928/lectures/lecture22.pdf)]:
 $$
@@ -334,7 +304,7 @@ e^{-1-\lambda} = x_i^{(t)} e^{-\eta g_i - 1 - \lambda} = \frac{x_i^{(t)} e^{-\et
 }
 $$
 
-#### Envelope theorem
+### Envelope theorem
 
 Envelope theorem ([Kevin Wainwright](https://www.sfu.ca/~wainwrig/Econ331/env-theorem2.pdf)) gives the derivative of a function $V$ that has the following form: 
 $$
@@ -367,7 +337,4 @@ $$
 \end{align*}
 $$
 again evaluated at $\mathbf{x}^*(\boldsymbol{\omega})$. Thus, the envelope theorem allow us to calculate the derivative of the loss function without requiring full differentiation through the entire minimization.
-
-
-# References
 

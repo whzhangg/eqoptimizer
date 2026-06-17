@@ -8,3 +8,4 @@ misc
 **/__pycache__
 src/*.py
 src/*.ipynb
+*.code-workspace
