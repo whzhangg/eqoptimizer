@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from pycalphad import Database
 
 import sys
 sys.path.append('/Users/wenhao/work/projects/2026-optimize PD/src')
@@ -7,7 +6,6 @@ from eqopt.tdb_reference import TDBHandler
 from eqopt.loss_function import PhaseEquilibrium
 from eqopt.optimize import optimize_thermodynamic_parameters, OptimizationConfig
 from eqopt.models import CEF, EnsembleSystem
-from eqopt.phase import PhaseID
 
 
 def get_observation(
@@ -30,7 +28,6 @@ if __name__ == "__main__":
     from eqopt.optimize import optimize_thermodynamic_parameters
 
     # step 1. get all phases and create a system
-    ref_db = Database(TO_OPT)
     phase_ids = TDBHandler(TO_OPT).get_phase_ids()
     all_phases = {}
     for phid in phase_ids:
@@ -49,12 +46,12 @@ if __name__ == "__main__":
     )
 
     # step 4. optimize
-    state = optimize_thermodynamic_parameters(
+    optimized_system, equilibrium_states, optimization_state = optimize_thermodynamic_parameters(
         system,
-        eqilibrium, 
-        config=config
+        config,
+        equilibria=eqilibrium,
     )
 
-    for phase_id in state.system.phase_ids:
+    for phase_id in optimized_system.phase_ids:
         print(f'$ {phase_id}')
-        print(state.system.get_model_by_phase_id(phase_id).get_tdb_str())
+        print(optimized_system.get_model_by_phase_id(phase_id).get_tdb_str())

@@ -8,8 +8,14 @@ import time
 import torch
 from rich.console import Console
 
+from .config import OptimizationConfig
 from .dtype import DEFAULT_DEVICE, DEFAULT_TYPE
-from .loss_function import SinglePhaseEquilibriumLoss
+from .loss_function import (
+    EquilibriumLossRecord,
+    PhaseEquilibriumOptState,
+    phase_equilibrium_loss_parts,
+    print_phi_at_equilibria,
+)
 from .phase import PhaseEquilibrium
 from .models import ThermodynamicSystem
 
@@ -81,10 +87,11 @@ def _collect_trainable_parameters(
 
 
 def _aggregate_loss_parts(
-    equilibrium_losses: Sequence[SinglePhaseEquilibriumLoss],
+    equilibrium_losses: Sequence[PhaseEquilibriumOptState],
     batch_indices: Sequence[int],
     system: ThermodynamicSystem,
     *,
+    config: OptimizationConfig,
     stable_weight: float,
     unstable_weight: float,
     regularization_weight: float,
@@ -92,16 +99,24 @@ def _aggregate_loss_parts(
 ) -> dict[str, object]:
     stable = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
     unstable = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
-    phi_at_equilibria = []
+    phi_at_equilibria: list[tuple[int, EquilibriumLossRecord]] = []
 
     for equilibrium_index in batch_indices:
-        parts = equilibrium_losses[equilibrium_index].get_loss_parts()
-        stable = stable + parts["stable"]
-        unstable = unstable + parts["unstable"]
-        phi_at_equilibria.append({
-            "equilibrium_index": equilibrium_index,
-            **parts,
-        })
+        record = phase_equilibrium_loss_parts(
+            equilibrium_losses[equilibrium_index],
+            system,
+            n_samples=config.n_samples,
+            tau=config.tau,
+            use_softmin=config.use_softmin,
+            n_steps=config.n_steps,
+            delta=config.delta,
+            relu_margin=config.relu_margin,
+            unstable_huber_beta=config.unstable_huber_beta,
+            scale_energy_by_rt=config.scale_energy_by_rt,
+        )
+        stable = stable + record.stable_loss
+        unstable = unstable + record.unstable_loss
+        phi_at_equilibria.append((equilibrium_index, record))
 
     normalizer = max(len(batch_indices), 1)
     stable = stable / normalizer
@@ -127,231 +142,105 @@ def _aggregate_loss_parts(
 
 
 def _print_phi_at_equilibria(
-    equilibrium_losses: Sequence[SinglePhaseEquilibriumLoss],
     loss_parts: dict[str, object],
     *,
     console,
 ) -> None:
-    for entry in loss_parts["phi_at_equilibria"]:
-        equilibrium_index = entry["equilibrium_index"]
+    for equilibrium_index, record in loss_parts["phi_at_equilibria"]:
         console.print(f"{equilibrium_index:3d}) ", end="")
-        equilibrium_losses[equilibrium_index].print_phi_at_equilibria(
-            entry,
-            console=console,
-        )
+        print_phi_at_equilibria(record, console=console)
 
 
-@dataclasses.dataclass
-class OptimizationConfig:
-    batch_size: int | None = None
-    epochs: int = 500
-    lr: float = 1000.0
-    optimizer_cls: type[torch.optim.Optimizer] = torch.optim.Adam
-    loss_threshold: float | None = None
-    cosine_decay: bool = True
-    min_lr_factor: float = 0.1
-
-    stable_weight: float = 1.0
-    unstable_weight: float = 1.0
-    regularization_weight: float = 1.0e-12
-    regularize_difference: bool = False
-    
-    n_samples: int = 64
-    tau: float | None = None
-    use_softmin: bool = True
-    relu_margin: float = 0.0
-    unstable_huber_beta: float | None = 1.0
-    scale_energy_by_rt: bool = True
-    n_steps: int = 6
-    delta: float = 0.3
-
-    mu_convergence_tol: float = 50.0
-    mu_init_lr: float = 5000.0
-    mu_init_max_iter: int = 1000
-    mu_init_cosine_decay: bool = True
-    mu_strategy: str = "auto"
+def _empty_history() -> dict[str, list[float | int]]:
+    return {
+        "iepoch": [],
+        "stable_loss": [],
+        "unstable_loss": [],
+        "regularization_loss": [],
+        "weighted_total_loss": [],
+    }
 
 
-    @classmethod
-    def from_state_dict(cls, state_dict: dict[str, object]) -> "OptimizationConfig":
-        config_data = dict(state_dict.get("config", {}))
-        optimizer_name = config_data.pop("optimizer_cls", "Adam")
-        optimizer_cls = getattr(torch.optim, optimizer_name, torch.optim.Adam)
-        field_names = {field.name for field in dataclasses.fields(cls)}
-        filtered = {
-            key: value
-            for key, value in config_data.items()
-            if key in field_names
-        }
-        return cls(optimizer_cls=optimizer_cls, **filtered)
+def _normalize_history(history: object) -> dict[str, list[float | int]]:
+    normalized = _empty_history()
+    if isinstance(history, dict):
+        for key in normalized:
+            normalized[key] = list(history.get(key, []))
+        return normalized
+
+    # Backward compatibility for older checkpoints with a flat total-loss list.
+    if isinstance(history, list):
+        normalized["iepoch"] = list(range(1, len(history) + 1))
+        normalized["weighted_total_loss"] = list(history)
+    return normalized
 
 
 @dataclasses.dataclass
 class OptimizationState:
-    system: ThermodynamicSystem
-    equilibria: tuple[PhaseEquilibrium, ...]
-    config: OptimizationConfig
-    equilibrium_losses: torch.nn.ModuleList
+    config: OptimizationConfig | None = None
     parameter0: dict[str, torch.Tensor] | None = None
-    torch_optimizer: torch.optim.Optimizer | None = None
-    scheduler: object | None = None
-    history: list[float] = dataclasses.field(default_factory=list)
+    torch_optimizer_state: dict[str, object] | None = None
+    scheduler_state: dict[str, object] | None = None
+    history: dict[str, list[float | int]] = dataclasses.field(
+        default_factory=_empty_history
+    )
     epoch: int = 0
-    global_step: int = 0
     best_loss: float = math.inf
     initial_loss_parts: dict[str, object] | None = None
     final_loss_parts: dict[str, object] | None = None
 
     @classmethod
-    def initialize(
+    def create(
         cls,
         system: ThermodynamicSystem,
-        equilibria: Sequence[PhaseEquilibrium],
         config: OptimizationConfig,
-        *,
-        initialize_mu: bool = True,
-        console=None,
     ) -> "OptimizationState":
-        if console is None:
-            console = get_console()
-
-        if not equilibria:
-            raise ValueError("No equilibria supplied for optimization.")
-
-        equilibria = tuple(equilibria)
-
-        parameter0 = (
-            _snapshot_trainable_model_parameters(system)
-            if config.regularize_difference
-            else None
-        )
-
-        console.rule("BUILD EQUILIBRIUM LOSSES")
-        equilibrium_losses = torch.nn.ModuleList(
-            [
-                SinglePhaseEquilibriumLoss(
-                    equilibrium,
-                    system,
-                    n_samples=config.n_samples,
-                    tau=config.tau,
-                    use_softmin=config.use_softmin,
-                    relu_margin=config.relu_margin,
-                    unstable_huber_beta=config.unstable_huber_beta,
-                    scale_energy_by_rt=config.scale_energy_by_rt,
-                    n_steps=config.n_steps,
-                    delta=config.delta,
-                    mu_init_lr=config.mu_init_lr,
-                    mu_init_max_iter=config.mu_init_max_iter,
-                    mu_convergence_tol=config.mu_convergence_tol,
-                    mu_init_cosine_decay=config.mu_init_cosine_decay,
-                    mu_strategy=config.mu_strategy,
-                    initialize_mu=initialize_mu,
-                    console=console,
-                )
-                for equilibrium in equilibria
-            ]
-        )
-
         return cls(
-            system=system,
-            equilibria=equilibria,
             config=config,
-            equilibrium_losses=equilibrium_losses,
-            parameter0=parameter0,
-        )
-
-
-    def trainable_parameters(self) -> list[torch.nn.Parameter]:
-        return _collect_trainable_parameters(self.system, self.equilibrium_losses)
-
-
-    def build_torch_optimizer(self) -> torch.optim.Optimizer:
-        parameters = self.trainable_parameters()
-        if not parameters:
-            raise ValueError(
-                "No trainable parameters found in the supplied phases/losses."
+            parameter0=(
+                _snapshot_trainable_model_parameters(system)
+                if config.regularize_difference
+                else None
             )
-        self.torch_optimizer = self.config.optimizer_cls(parameters, lr=self.config.lr)
-        return self.torch_optimizer
-
-
-    def build_scheduler(self, total_steps: int):
-        if not self.config.cosine_decay:
-            self.scheduler = None
-            return None
-
-        min_lr_factor = float(self.config.min_lr_factor)
-        if min_lr_factor < 0.0 or min_lr_factor > 1.0:
-            raise ValueError("min_lr_factor must be between 0 and 1.")
-
-        def cosine_lr_factor(step: int) -> float:
-            progress = min(max(step, 0), total_steps) / total_steps
-            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
-            return min_lr_factor + (1.0 - min_lr_factor) * cosine
-
-        if self.torch_optimizer is None:
-            self.build_torch_optimizer()
-        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.torch_optimizer,
-            lr_lambda=cosine_lr_factor,
         )
-        return self.scheduler
-
-
-    def loss_parts(self, batch_indices: Sequence[int]) -> dict[str, object]:
-        return _aggregate_loss_parts(
-            self.equilibrium_losses,
-            batch_indices,
-            self.system,
-            stable_weight=self.config.stable_weight,
-            unstable_weight=self.config.unstable_weight,
-            regularization_weight=self.config.regularization_weight,
-            parameter0=self.parameter0,
-        )
-
-
-    def config_state_dict(self) -> dict[str, object]:
-        config = {
-            field.name: getattr(self.config, field.name)
-            for field in dataclasses.fields(self.config)
-            if field.name != "optimizer_cls"
-        }
-        config["optimizer_cls"] = self.config.optimizer_cls.__name__
-        return config
 
 
     def state_dict(self) -> dict[str, object]:
         return {
-            "equilibrium_losses": self.equilibrium_losses.state_dict(),
-            "torch_optimizer": (
-                None
-                if self.torch_optimizer is None
-                else self.torch_optimizer.state_dict()
-            ),
-            "scheduler": (
-                None if self.scheduler is None else self.scheduler.state_dict()
-            ),
-            "history": list(self.history),
+            "config": self.config,
+            "torch_optimizer_state": self.torch_optimizer_state,
+            "scheduler_state": self.scheduler_state,
+            "history": {
+                key: list(value)
+                for key, value in self.history.items()
+            },
             "epoch": self.epoch,
-            "global_step": self.global_step,
             "best_loss": self.best_loss,
             "parameter0": self.parameter0,
-            "config": self.config_state_dict(),
+            "initial_loss_parts": self.initial_loss_parts,
+            "final_loss_parts": self.final_loss_parts,
         }
 
 
     def load_state_dict(self, state_dict: dict[str, object]) -> None:
-        if "equilibrium_losses" in state_dict:
-            self.equilibrium_losses.load_state_dict(state_dict["equilibrium_losses"])
-        if self.torch_optimizer is not None and state_dict.get("torch_optimizer"):
-            self.torch_optimizer.load_state_dict(state_dict["torch_optimizer"])
-        if self.scheduler is not None and state_dict.get("scheduler"):
-            self.scheduler.load_state_dict(state_dict["scheduler"])
-        self.history = list(state_dict.get("history", []))
+        config = state_dict.get("config", self.config)
+        if isinstance(config, dict):
+            config = OptimizationConfig.from_state_dict({"config": config})
+        self.config = config
+        self.torch_optimizer_state = state_dict.get("torch_optimizer_state")
+        self.scheduler_state = state_dict.get("scheduler_state")
+        self.history = _normalize_history(state_dict.get("history", {}))
         self.epoch = int(state_dict.get("epoch", 0))
-        self.global_step = int(state_dict.get("global_step", 0))
         self.best_loss = float(state_dict.get("best_loss", math.inf))
         self.parameter0 = state_dict.get("parameter0", self.parameter0)
+        self.initial_loss_parts = state_dict.get(
+            "initial_loss_parts",
+            self.initial_loss_parts,
+        )
+        self.final_loss_parts = state_dict.get(
+            "final_loss_parts",
+            self.final_loss_parts,
+        )
 
 
     def save(self, path: str | Path) -> None:
@@ -361,27 +250,105 @@ class OptimizationState:
 
 
     def load(self, path: str | Path) -> None:
-        state_dict = torch.load(path, map_location=DEFAULT_DEVICE)
+        state_dict = torch.load(
+            path,
+            map_location=DEFAULT_DEVICE,
+            weights_only=False,
+        )
         self.load_state_dict(state_dict)
 
 
+    def update_from_runtime(
+        self,
+        optimizer: torch.optim.Optimizer,
+        scheduler,
+    ) -> None:
+        self.torch_optimizer_state = optimizer.state_dict()
+        self.scheduler_state = None if scheduler is None else scheduler.state_dict()
+
+
+    def record_history(
+        self,
+        iepoch: int,
+        loss_parts: dict[str, object],
+    ) -> None:
+        self.history["iepoch"].append(int(iepoch))
+        self.history["stable_loss"].append(
+            float(loss_parts["stable"].detach().cpu())
+        )
+        self.history["unstable_loss"].append(
+            float(loss_parts["unstable"].detach().cpu())
+        )
+        self.history["regularization_loss"].append(
+            float(loss_parts["regularization"].detach().cpu())
+        )
+        self.history["weighted_total_loss"].append(
+            float(loss_parts["total"].detach().cpu())
+        )
+
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "OptimizationState":
+        loaded = torch.load(
+            path,
+            map_location=DEFAULT_DEVICE,
+            weights_only=False,
+        )
+        if isinstance(loaded, cls):
+            return loaded
+        state = cls()
+        state.load_state_dict(loaded)
+        return state
+
+
+def _build_torch_optimizer(
+    system: ThermodynamicSystem,
+    equilibrium_states: torch.nn.ModuleList,
+    config: OptimizationConfig,
+) -> torch.optim.Optimizer:
+    parameters = _collect_trainable_parameters(system, equilibrium_states)
+    if not parameters:
+        raise ValueError(
+            "No trainable parameters found in the supplied system/equilibria."
+        )
+    return config.optimizer_cls(parameters, lr=config.lr)
+
+
+def _build_scheduler(
+    optimizer: torch.optim.Optimizer,
+    config: OptimizationConfig,
+    total_steps: int,
+):
+    if not config.cosine_decay:
+        return None
+
+    min_lr_factor = float(config.min_lr_factor)
+    if min_lr_factor < 0.0 or min_lr_factor > 1.0:
+        raise ValueError("min_lr_factor must be between 0 and 1.")
+
+    def cosine_lr_factor(step: int) -> float:
+        progress = min(max(step, 0), total_steps) / total_steps
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return min_lr_factor + (1.0 - min_lr_factor) * cosine
+
+    return torch.optim.lr_scheduler.LambdaLR(
+        optimizer,
+        lr_lambda=cosine_lr_factor,
+    )
+
+
 def optimize_thermodynamic_parameters(
-    system: ThermodynamicSystem | None = None,
+    system: ThermodynamicSystem | str | Path,
+    config: OptimizationConfig | None,
     equilibria: Sequence[PhaseEquilibrium] | None = None,
-    config: OptimizationConfig | None = None,
+    equilibrium_states: Sequence[PhaseEquilibriumOptState] | str | Path | None = None,
+    optimization_state: OptimizationState | str | Path | None = None,
     *,
     checkpoint_dir: str | Path | None = 'checkpoint',
-    restart: bool = False,
-    save_every: int | None = 50,
-    best_filename: str = "best.pt",
-    last_filename: str = "last.pt",
-    opt_state_filename: str = "opt_state.pt",
-    data_filename: str = "data.pt",
-    config_filename: str = "config.pt",
-    print_every: int = 10,
+    record_every: int = 10,
     print_final_results: bool = True,
     console=None,
-) -> OptimizationState:
+) -> tuple[ThermodynamicSystem, Sequence[PhaseEquilibriumOptState], OptimizationState]:
     """Optimize thermodynamic models using OptimizationConfig/OptimizationState."""
     if console is None:
         console = get_console()
@@ -389,101 +356,119 @@ def optimize_thermodynamic_parameters(
     if checkpoint_dir is None:
         checkpoint_path = None
         last_model_path = None
+        last_eqstate_path = None
         best_model_path = None
+        best_eqstate_path = None
         opt_state_path = None
-        data_path = None
-        config_path = None
     else:
         checkpoint_path = Path(checkpoint_dir)
-        last_model_path = checkpoint_path / last_filename
-        best_model_path = checkpoint_path / best_filename
-        opt_state_path = checkpoint_path / opt_state_filename
-        data_path = checkpoint_path / data_filename
-        config_path = checkpoint_path / config_filename
+        last_model_path = checkpoint_path / 'model_last.pt'
+        last_eqstate_path = checkpoint_path / 'equilibria_last.pt'
+        best_model_path = checkpoint_path / 'model_best.pt'
+        best_eqstate_path = checkpoint_path / 'equilibria_best.pt'
+        opt_state_path = checkpoint_path / 'opt_state.pt'
 
-    if restart:
-        if checkpoint_path is None:
-            raise ValueError("checkpoint_dir is required when restart=True.")
-        console.print(f"restarting optimization from {checkpoint_path}")
-        console.print(f'optimization inputs are ignored')
+    if isinstance(system, (str, Path)):
         system = torch.load(
-            last_model_path,
+            system,
             map_location=DEFAULT_DEVICE,
             weights_only=False,
         )
-        equilibria = torch.load(
-            data_path,
-            map_location=DEFAULT_DEVICE,
-            weights_only=False,
-        )
-        config = torch.load(
-            config_path,
-            map_location=DEFAULT_DEVICE,
-            weights_only=False,
-        )
-        if not isinstance(system, ThermodynamicSystem):
-            raise TypeError(
-                f"Expected {last_model_path} to contain a ThermodynamicSystem, "
-                f"got {type(system).__name__}."
+
+    using_existing_state = optimization_state is not None
+    if isinstance(optimization_state, (str, Path)):
+        state = OptimizationState.from_file(optimization_state)
+    elif optimization_state is None:
+        if config is None and opt_state_path is not None and opt_state_path.exists():
+            state = OptimizationState.from_file(opt_state_path)
+            using_existing_state = True
+            console.print(f"loaded optimization state from {opt_state_path}")
+        elif config is None:
+            raise ValueError(
+                "config is required when no optimization_state is supplied."
             )
-        if not isinstance(config, OptimizationConfig):
-            raise TypeError(
-                f"Expected {config_path} to contain an OptimizationConfig, "
-                f"got {type(config).__name__}."
-            )
+        else:
+            state = OptimizationState.create(system, config)
     else:
-        if system is None:
-            raise ValueError("system is required when restart=False.")
-        if equilibria is None:
-            raise ValueError("equilibria is required when restart=False.")
+        state = optimization_state
+
+    if state.config is None:
         if config is None:
-            raise ValueError("config is required when restart=False.")
-
-    state = OptimizationState.initialize(
-        system,
-        equilibria,
-        config,
-        initialize_mu=not restart,
-        console=console,
-    )
-
-    if restart:
-        # load state
-        state.build_torch_optimizer()
-        n_equilibria_for_steps = len(state.equilibria)
-        effective_batch_size_for_steps = (
-            n_equilibria_for_steps
-            if config.batch_size is None
-            else int(config.batch_size)
-        )
-        effective_batch_size_for_steps = max(
-            1,
-            min(effective_batch_size_for_steps, n_equilibria_for_steps),
-        )
-        batches_per_epoch_for_steps = math.ceil(
-            n_equilibria_for_steps / effective_batch_size_for_steps
-        )
-        state.build_scheduler(max(1, int(config.epochs) * batches_per_epoch_for_steps))
-        state.load(opt_state_path)
+            raise ValueError(
+                "OptimizationState does not contain an OptimizationConfig."
+            )
+        state.config = config
+    elif using_existing_state and config is not None:
         console.print(
-            f"loaded optimization state at epoch {state.epoch}, "
-            f"step {state.global_step}"
+            "using config stored in optimization state; "
+            "input config is ignored"
         )
+    config = state.config
+
+    if isinstance(equilibrium_states, (str, Path)):
+        equilibrium_states = torch.load(
+            equilibrium_states,
+            map_location=DEFAULT_DEVICE,
+            weights_only=False,
+        )
+    elif (
+        equilibrium_states is None
+        and equilibria is None
+        and last_eqstate_path is not None
+        and last_eqstate_path.exists()
+    ):
+        equilibrium_states = torch.load(
+            last_eqstate_path,
+            map_location=DEFAULT_DEVICE,
+            weights_only=False,
+        )
+        console.print(f"loaded equilibrium states from {last_eqstate_path}")
+    elif equilibrium_states is None and equilibria is not None:
+        equilibrium_states = tuple(
+            PhaseEquilibriumOptState(eq, mu_strategy=config.mu_strategy)
+            for eq in equilibria
+        )
+        console.rule('we initialize states of equilibria with auxiliary chemical potential')
+        for eq_state in equilibrium_states:
+            eq_state.initial_mu_by_minimization(
+                system,
+                lr=config.mu_init_lr,
+                max_iter=config.mu_init_max_iter,
+                cosine_decay=config.mu_init_cosine_decay,
+                convergence_tol=config.mu_convergence_tol,
+                n_samples=config.n_samples,
+                tau=config.tau,
+                use_softmin=config.use_softmin,
+                delta=config.delta,
+                relu_margin=config.relu_margin,
+                unstable_huber_beta=config.unstable_huber_beta,
+                scale_energy_by_rt=config.scale_energy_by_rt,
+                console=console
+            )
+    elif equilibrium_states is None:
+        raise ValueError(
+            "Either equilibria or equilibrium_states is required to optimize."
+        )
+
+    if not isinstance(equilibrium_states, torch.nn.ModuleList):
+        equilibrium_states = torch.nn.ModuleList(list(equilibrium_states))
 
     if checkpoint_path is not None:
         checkpoint_path.mkdir(parents=True, exist_ok=True)
-        if not restart:
-            torch.save(tuple(state.equilibria), data_path)
-            torch.save(config, config_path)
 
     # proceed optimization
-    n_equilibria = len(state.equilibria)
+    n_equilibria = len(equilibrium_states)
+    if n_equilibria == 0:
+        raise ValueError("At least one equilibrium state is required.")
+
     effective_batch_size = (
         n_equilibria if config.batch_size is None else int(config.batch_size)
     )
     effective_batch_size = max(1, min(effective_batch_size, n_equilibria))
     batches_per_epoch = math.ceil(n_equilibria / effective_batch_size)
     total_steps = max(1, int(config.epochs) * batches_per_epoch)
+    if record_every is None or record_every <= 0:
+        raise ValueError("record_every must be a positive integer.")
 
     console.rule("OPTIMIZATION PARAMETERS")
     console.print(f"epochs = {config.epochs}")
@@ -507,41 +492,71 @@ def optimize_thermodynamic_parameters(
     console.print(f"regularization weight = {config.regularization_weight}")
     console.print(f"regularize difference = {config.regularize_difference}")
     console.print(f"optimizer = {config.optimizer_cls}")
-    average_T = sum(eq.temperature for eq in state.equilibria) / n_equilibria
+    console.print(f"record every = {record_every} epoch(s)")
+    average_T = (
+        sum(eq_state.equilibrium.temperature for eq_state in equilibrium_states)
+        / n_equilibria
+    )
     console.print(f"average temp of equilibria = {average_T}")
 
     console.rule("MODEL PARAMETERS")
     trainable_model_parameters = sum(
         parameter.numel()
-        for parameter in state.system.parameters()
+        for parameter in system.parameters()
         if parameter.requires_grad
     )
     console.print(f"{'thermodynamic system':<24s} ({trainable_model_parameters:d} parameters)")
     latent_mu_parameters = sum(
         parameter.numel()
-        for parameter in state.equilibrium_losses.parameters()
+        for parameter in equilibrium_states.parameters()
         if parameter.requires_grad
     )
     console.print(f"{'latent mu':<24s} ({latent_mu_parameters:d} parameters)")
 
-    all_indices = list(range(n_equilibria))
-    optimizer = state.torch_optimizer or state.build_torch_optimizer()
-    scheduler = state.scheduler or state.build_scheduler(total_steps)
+    optimizer = _build_torch_optimizer(system, equilibrium_states, config)
+    if state.torch_optimizer_state is not None:
+        optimizer.load_state_dict(state.torch_optimizer_state)
+        console.print(
+            f"loaded optimizer state at epoch {state.epoch}"
+        )
 
+    scheduler = _build_scheduler(optimizer, config, total_steps)
+    if scheduler is not None and state.scheduler_state is not None:
+        scheduler.load_state_dict(state.scheduler_state)
+
+    all_indices = list(range(n_equilibria))
+
+    # Compute the loss at function entry. Preserve an existing initial loss when
+    # continuing a run, so restart reports the original starting point.
     with torch.no_grad():
-        state.initial_loss_parts = state.loss_parts(all_indices)
+        entry_loss_parts = _aggregate_loss_parts(
+            equilibrium_states,
+            all_indices,
+            system,
+            config=config,
+            stable_weight=config.stable_weight,
+            unstable_weight=config.unstable_weight,
+            regularization_weight=config.regularization_weight,
+            parameter0=state.parameter0,
+        )
+    if state.initial_loss_parts is None:
+        state.initial_loss_parts = entry_loss_parts
 
     if not math.isfinite(state.best_loss):
-        state.best_loss = float(state.initial_loss_parts["total"].detach().cpu())
-    if checkpoint_path is not None and not restart:
-        torch.save(state.system, best_model_path)
-        torch.save(state.system, last_model_path)
+        state.best_loss = float(entry_loss_parts["total"].detach().cpu())
+    if checkpoint_path is not None and state.epoch == 0:
+        state.update_from_runtime(optimizer, scheduler)
+        torch.save(system, best_model_path)
+        torch.save(system, last_model_path)
+        torch.save(equilibrium_states, best_eqstate_path)
+        torch.save(equilibrium_states, last_eqstate_path)
         state.save(opt_state_path)
         console.print(
             f"saved initial checkpoint to {checkpoint_path} "
             f"(loss={state.best_loss:.2e})"
         )
 
+    # start optimization
     console.rule("OPTIMIZE")
     t0 = time.time()
     should_stop = False
@@ -557,97 +572,123 @@ def optimize_thermodynamic_parameters(
             ]
 
         for batch_indices in batches:
-            state.global_step += 1
             optimizer.zero_grad(set_to_none=True)
 
-            loss_parts = state.loss_parts(batch_indices)
+            loss_parts = _aggregate_loss_parts(
+                equilibrium_states,
+                batch_indices,
+                system,
+                config=config,
+                stable_weight=config.stable_weight,
+                unstable_weight=config.unstable_weight,
+                regularization_weight=config.regularization_weight,
+                parameter0=state.parameter0,
+            )
             total_loss = loss_parts["total"]
             total_loss.backward()
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
-            state.history.append(float(total_loss.detach().cpu()))
 
-            if (
-                print_every
-                and (
-                    state.global_step == 1
-                    or state.global_step % print_every == 0
+        should_record = (
+            epoch == 1
+            or epoch == config.epochs
+            or epoch % record_every == 0
+        )
+
+        if should_record:
+            with torch.no_grad():
+                epoch_loss_parts = _aggregate_loss_parts(
+                    equilibrium_states,
+                    all_indices,
+                    system,
+                    config=config,
+                    stable_weight=config.stable_weight,
+                    unstable_weight=config.unstable_weight,
+                    regularization_weight=config.regularization_weight,
+                    parameter0=state.parameter0,
                 )
-            ):
-                stable_loss = float(loss_parts["stable"].detach().cpu())
-                unstable_loss = float(loss_parts["unstable"].detach().cpu())
-                regularization_loss = float(
-                    loss_parts["regularization"].detach().cpu()
-                )
-                current_lr = optimizer.param_groups[0]["lr"]
-                t1 = time.time()
-                console.print(
-                    f"epoch {epoch:>4d}/{config.epochs}, "
-                    f"step {state.global_step:>6d}: "
-                    f"lr={current_lr:10.2e}, "
-                    f"loss={state.history[-1]:10.2e}, "
-                    f"stable={stable_loss:10.2e}, "
-                    f"unstable={unstable_loss:10.2e}, "
-                    f"regularization={regularization_loss:10.2e}, "
-                    f'time={t1-t0:>.3f} sec.'
-                )
-                t0 = t1
+            state.record_history(epoch, epoch_loss_parts)
+            epoch_loss = state.history["weighted_total_loss"][-1]
+
+            stable_loss = state.history["stable_loss"][-1]
+            unstable_loss = state.history["unstable_loss"][-1]
+            regularization_loss = state.history["regularization_loss"][-1]
+            current_lr = optimizer.param_groups[0]["lr"]
+            t1 = time.time()
+            console.print(
+                f"epoch {epoch:>4d}/{config.epochs}, "
+                f"lr={current_lr:10.2e}, "
+                f"loss={epoch_loss:10.2e}, "
+                f"stable={stable_loss:10.2e}, "
+                f"unstable={unstable_loss:10.2e}, "
+                f"regularization={regularization_loss:10.2e}, "
+                f"time={t1-t0:>.3f} sec."
+            )
+            t0 = t1
 
             if (
                 config.loss_threshold is not None
-                and state.history[-1] <= config.loss_threshold
+                and epoch_loss <= config.loss_threshold
             ):
-                if print_every:
-                    console.print(
-                        "\n"
-                        f"stopping early at epoch {epoch}/{config.epochs}, "
-                        f"step {state.global_step}: "
-                        f"loss={state.history[-1]:.2e} <= "
-                        f"threshold={config.loss_threshold:.2e}"
-                    )
+                console.print(
+                    "\n"
+                    f"stopping early at epoch {epoch}/{config.epochs}, "
+                    f"loss={epoch_loss:.2e} <= "
+                    f"threshold={config.loss_threshold:.2e}"
+                )
                 should_stop = True
-                break
+
+            if checkpoint_path is not None and epoch_loss < state.best_loss:
+                state.best_loss = epoch_loss
+                state.update_from_runtime(optimizer, scheduler)
+                torch.save(system, best_model_path)
+                torch.save(equilibrium_states, best_eqstate_path)
+                state.save(opt_state_path)
+
+            if checkpoint_path is not None:
+                state.update_from_runtime(optimizer, scheduler)
+                torch.save(system, last_model_path)
+                torch.save(equilibrium_states, last_eqstate_path)
+                state.save(opt_state_path)
+
         if should_stop:
             break
 
-        if (
-            checkpoint_path is not None
-            and save_every is not None
-            and save_every > 0
-            and epoch % save_every == 0
-        ):
-            torch.save(state.system, last_model_path)
-            state.save(opt_state_path)
-
-        with torch.no_grad():
-            epoch_loss = float(state.loss_parts(all_indices)["total"].detach().cpu())
-        
-        if checkpoint_path is not None and epoch_loss < state.best_loss:
-            state.best_loss = epoch_loss
-            torch.save(state.system, best_model_path)
-            state.save(opt_state_path)
-
     with torch.no_grad():
-        state.final_loss_parts = state.loss_parts(all_indices)
+        state.final_loss_parts = _aggregate_loss_parts(
+            equilibrium_states,
+            all_indices,
+            system,
+            config=config,
+            stable_weight=config.stable_weight,
+            unstable_weight=config.unstable_weight,
+            regularization_weight=config.regularization_weight,
+            parameter0=state.parameter0,
+        )
     final_loss = float(state.final_loss_parts["total"].detach().cpu())
     
     if checkpoint_path is not None:
-        torch.save(state.system, last_model_path)
+        state.update_from_runtime(optimizer, scheduler)
+        torch.save(system, last_model_path)
+        torch.save(equilibrium_states, last_eqstate_path)
         state.save(opt_state_path)
         console.print(f"saved latest model to {last_model_path}")
+        console.print(f"saved latest equilibrium states to {last_eqstate_path}")
         console.print(f"saved latest optimization state to {opt_state_path}")
     
     if checkpoint_path is not None and final_loss < state.best_loss:
         state.best_loss = final_loss
-        torch.save(state.system, best_model_path)
+        state.update_from_runtime(optimizer, scheduler)
+        torch.save(system, best_model_path)
+        torch.save(equilibrium_states, best_eqstate_path)
         state.save(opt_state_path)
         console.print(
             f"saved best model to {best_model_path} "
             f"(loss={state.best_loss:.2e})"
         )
 
-    if state.history:
+    if state.history["weighted_total_loss"]:
         console.print(
             "initial loss: "
             f"{float(state.initial_loss_parts['total'].detach().cpu()):.2e}"
@@ -657,9 +698,8 @@ def optimize_thermodynamic_parameters(
     if print_final_results:
         console.rule("PHI AT EQUILIBRIA (FINAL)")
         _print_phi_at_equilibria(
-            state.equilibrium_losses,
             state.final_loss_parts,
             console=console,
         )
     console.rule("FINISHED")
-    return state
+    return system, equilibrium_states, state

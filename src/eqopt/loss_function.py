@@ -2,12 +2,13 @@ import itertools
 import math
 import torch
 import torch.nn.functional as F
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
+import dataclasses
 
 from .models.system_abc import ThermodynamicSystem
 from .dtype import DEFAULT_DEVICE, DEFAULT_TYPE
 from .utilities import R
-from .phase import PhaseEquilibrium
+from .phase import PhaseID, PhaseEquilibrium
 
 
 def _format_scalar_for_print(value: torch.Tensor | float) -> str:
@@ -42,30 +43,23 @@ def _condition_number(matrix: torch.Tensor) -> float:
     return float((singular_values[0] / singular_values[-1]).cpu())
 
 
-class SinglePhaseEquilibriumLoss(torch.nn.Module):
+@dataclasses.dataclass
+class EquilibriumLossRecord:
+    equilibrium: PhaseEquilibrium
+    mu_strategy: str
+    mu: Mapping[str, torch.Tensor]
+    phi: Mapping[PhaseID, torch.Tensor]
+    stable_phase_ids: Set[PhaseID]
+    stable_loss: torch.Tensor
+    unstable_loss: torch.Tensor
+
+
+class PhaseEquilibriumOptState(torch.nn.Module):
     analytic_condition_threshold: float = 1.0e10
     def __init__(self,
         equilibrium: PhaseEquilibrium,
-        system: ThermodynamicSystem,
         *,
-        n_samples: int = 64,
-        tau: float | None = None,
-        use_softmin: bool = True,
-        n_steps: int = 6,
-        delta: float = 0.3,
-        # loss calculation
-        relu_margin: float = 0.0,
-        unstable_huber_beta: float | None = 1.0,
-        scale_energy_by_rt: bool = True,
-        # mu calculation options
-        mu_init_lr: float = 5000.0,
-        mu_init_max_iter: int = 1000,
-        mu_convergence_tol: float = 10.0,
-        mu_init_cosine_decay: bool = True,
         mu_strategy: str = "auto",
-        initialize_mu: bool = True,
-        # IO
-        console = None
     ):
         super().__init__()
         if len(equilibrium.phases) != len(equilibrium.phase_compositions):
@@ -77,21 +71,8 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
             raise ValueError("PhaseEquilibrium must contain at least one phase.")
 
         self.equilibrium = equilibrium
-        object.__setattr__(self, "system", system)
         self.elements = tuple(sorted(equilibrium.chemical_system))
-        self.n_samples_each_side = n_samples
-        self.tau = tau
-        self.use_softmin = use_softmin
-        self.relu_margin = relu_margin
-        self.unstable_huber_beta = unstable_huber_beta
-        self.scale_energy_by_rt = scale_energy_by_rt
-        self.n_steps = n_steps
-        self.delta = delta
-        self.console = console
         self.stable_phase_ids = set(self.equilibrium.phases)
-        self.phases_to_evaluate = tuple(
-            self.system.get_competing_phases(self.elements)
-        )
 
         self.x_matrix = torch.stack(
             [_composition_tensor(composition, self.elements) 
@@ -108,21 +89,10 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
                     dtype=DEFAULT_TYPE,
                 )
             )
-            if initialize_mu:
-                self.initial_mu_by_minimization(
-                    lr=mu_init_lr,
-                    max_iter=mu_init_max_iter,
-                    cosine_decay=mu_init_cosine_decay,
-                    convergence_tol=mu_convergence_tol,
-                )
-            else:
-                torch.nn.init.zeros_(self.mu)
+            torch.nn.init.zeros_(self.mu)
         else:
             self.register_parameter("mu", None)
 
-        if self.console is not None:
-            self.console.print(str(self.equilibrium))
-        
 
     def _select_mu_strategy(self, mu_strategy: str) -> str:
         if mu_strategy not in ("auto", "analytic", "latent"):
@@ -191,14 +161,7 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
         self.augmented_condition = best_condition
 
 
-    def _mu_dict_from_tensor(self, mu: torch.Tensor) -> dict[str, torch.Tensor]:
-        return {
-            element: mu[index]
-            for index, element in enumerate(self.elements)
-        }
-
-
-    def _stable_gibbs_vector(self) -> torch.Tensor:
+    def _stable_gibbs_vector(self, system: ThermodynamicSystem) -> torch.Tensor:
         values = []
         for phase, composition in zip(
             self.equilibrium.phases,
@@ -206,7 +169,7 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
             strict=True,
         ):
             values.append(
-                self.system.get_gibbs_energy(
+                system.get_gibbs_energy(
                     phase,
                     composition,
                     self.equilibrium.temperature,
@@ -215,29 +178,31 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
         return torch.stack(values)
 
 
-    def solve_mu_analytic(self) -> Mapping[str, torch.Tensor]:
-        g_vector = self._stable_gibbs_vector()
-        if self.x_matrix.shape[0] == self.x_matrix.shape[1]:
-            mu = torch.linalg.solve(self.x_matrix, g_vector)
-        else:
-            mu = torch.linalg.lstsq(self.x_matrix, g_vector).solution
-        return self._mu_dict_from_tensor(mu)
-
-
-    def solve_mu_augmented(self) -> torch.Tensor:
+    def solve_mu_augmented(self, system: ThermodynamicSystem) -> torch.Tensor:
         if self.mu is None:
             raise RuntimeError("Latent chemical-potential RHS parameter is missing.")
-        g_vector = self._stable_gibbs_vector()
+        g_vector = self._stable_gibbs_vector(system)
         known_rhs = g_vector[list(self.independent_stable_row_indices)]
         rhs = torch.cat([known_rhs, self.mu], dim=0)
         return torch.linalg.solve(self.augmented_x_matrix, rhs)
 
 
     def initial_mu_by_minimization(self,
-        lr: float,
-        max_iter: int,
-        cosine_decay: bool,
-        convergence_tol: float
+        system: ThermodynamicSystem,
+        *,
+        lr: float = 2000.0,
+        max_iter: int = 1000,
+        cosine_decay: bool = True,
+        convergence_tol: float = 50.0,
+        n_samples: int = 64,
+        tau: float | None = None,
+        use_softmin: bool = True,
+        n_steps: int = 6,
+        delta: float = 0.3,
+        relu_margin: float = 0.0,
+        unstable_huber_beta: float | None = 1.0,
+        scale_energy_by_rt: bool = True,
+        console = None,
     ):
         if self.mu is None:
             return
@@ -245,14 +210,14 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
             return
 
         with torch.no_grad():
-            g_vector = self._stable_gibbs_vector()
+            g_vector = self._stable_gibbs_vector(system)
             mu_guess = torch.linalg.pinv(self.x_matrix) @ g_vector
             self.mu.copy_(self.gauge_x_matrix @ mu_guess)
 
-        if self.console is not None:
-            self.console.rule("INITIAL CHEMICAL POTENTIAL")
+        if console is not None:
+            console.rule("INITIAL CHEMICAL POTENTIAL")
 
-        model_parameters = list(self.system.parameters())
+        model_parameters = list(system.parameters())
         previous_requires_grad = [
             parameter.requires_grad
             for parameter in model_parameters
@@ -281,10 +246,21 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
             for steps in range(1, max_iter + 1):
                 previous_mu = self.mu.detach().clone()
                 optimizer.zero_grad(set_to_none=True)
-                loss_parts = self.get_loss_parts()
+                loss_parts = phase_equilibrium_loss_parts(
+                    self,
+                    system,
+                    n_samples=n_samples,
+                    tau=tau,
+                    use_softmin=use_softmin,
+                    n_steps=n_steps,
+                    delta=delta,
+                    relu_margin=relu_margin,
+                    unstable_huber_beta=unstable_huber_beta,
+                    scale_energy_by_rt=scale_energy_by_rt,
+                )
                 loss = (
-                    loss_parts["stable"]
-                    + loss_parts["unstable"]
+                    loss_parts.stable_loss
+                    + loss_parts.unstable_loss
                 )
                 loss.backward()
                 optimizer.step()
@@ -295,19 +271,19 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
                     converged = True
                     break
 
-            if self.console is not None:
-                self.console.print(
+            if console is not None:
+                console.print(
                     f"{self.strategy} mu: "
                     f"steps={steps}, "
                     f"converged to {convergence_tol:g} J/mol: {converged}, "
                     f"max delta={max_delta:10.2e} J/mol"
                 )
-                current_mu = self.solve_mu_augmented()
+                current_mu = self.solve_mu_augmented(system)
                 mu_text = ", ".join(
                     f"mu_{element}={_format_scalar_for_print(current_mu[index])}"
                     for index, element in enumerate(self.elements)
                 )
-                self.console.print(f"     chemical potential: {mu_text}")
+                console.print(f"     chemical potential: {mu_text}")
         finally:
             for parameter, requires_grad in zip(
                 model_parameters,
@@ -316,104 +292,135 @@ class SinglePhaseEquilibriumLoss(torch.nn.Module):
             ):
                 parameter.requires_grad_(requires_grad)
 
-    
-    def _current_mu_dict(self) -> Mapping[str, torch.Tensor]:
+
+    def current_mu_dict(
+        self,
+        system: ThermodynamicSystem,
+    ) -> Mapping[str, torch.Tensor]:
         if self.strategy == "analytic":
-            return self.solve_mu_analytic()
-        if self.mu is None:
-            raise RuntimeError("Latent chemical potential parameter is missing.")
-        return self._mu_dict_from_tensor(self.solve_mu_augmented())
-
-
-    def get_loss_parts(self) -> dict[str, object]:
-        temperature = torch.as_tensor(
-            self.equilibrium.temperature,
-            device=DEFAULT_DEVICE,
-            dtype=DEFAULT_TYPE,
-        )
-        if self.scale_energy_by_rt:
-            rt = R * temperature
-            energy_scale = float(rt.detach().cpu())
-        else:
-            rt = 1.0
-            energy_scale = 1.0
-        mu_dict = self._current_mu_dict()
-
-        phi_by_id = {
-            phase: self.system.get_grand_potential(
-                phase,
-                mu_dict,
-                temperature,
-                tau=self.tau,
-                use_softmin=self.use_softmin,
-                n_samples_each_side=self.n_samples_each_side,
-                n_steps=self.n_steps,
-                delta=self.delta,
-            )
-            for phase in self.phases_to_evaluate
-        }
-
-        phi_observed = [
-            phi_by_id[phase]
-            for phase in self.equilibrium.phases
-        ]
-        phi_all = list(phi_by_id.values())
-
-        stable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
-        if phi_observed:
-            stable_total = (
-                torch.stack(phi_observed) / rt
-            ).square().sum()
-
-        unstable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
-        if phi_all:
-            unstable_violation = F.relu(
-                (self.relu_margin - torch.stack(phi_all)) / rt
-            )
-            if self.unstable_huber_beta is None:
-                unstable_penalty = unstable_violation.sum()
+            # solve mu analytically
+            g_vector = self._stable_gibbs_vector(system)
+            if self.x_matrix.shape[0] == self.x_matrix.shape[1]:
+                mu = torch.linalg.solve(self.x_matrix, g_vector)
             else:
-                unstable_penalty = F.smooth_l1_loss(
-                    unstable_violation,
-                    torch.zeros_like(unstable_violation),
-                    beta=self.unstable_huber_beta / energy_scale,
-                    reduction="sum",
-                )
-            unstable_total = unstable_penalty
+                mu = torch.linalg.lstsq(self.x_matrix, g_vector).solution
+        else:
+            # latent mu
+            if self.mu is None:
+                raise RuntimeError("Latent chemical potential parameter is missing.")
+            mu = self.solve_mu_augmented(system)
 
         return {
-            "equilibrium": self.equilibrium,
-            "mu_strategy": self.strategy,
-            "mu": mu_dict,
-            "phi": phi_by_id,
-            "stable_phase_ids": self.stable_phase_ids,
-            "stable": stable_total,
-            "unstable": unstable_total,
+            element: mu[index]
+            for index, element in enumerate(self.elements)
         }
-
-
-    def print_phi_at_equilibria(self, loss_parts: Mapping[str, object], *, console=None):
-        if console is None:
-            console = self.console
-        if console is None:
-            from rich.console import Console
-            console = Console()
-        
-        console.print(f"{loss_parts['mu_strategy']} mu: {str(loss_parts['equilibrium'])}")
-        mu_text = ", ".join(
-            f"mu_{element}={_format_scalar_for_print(value)}"
-            for element, value in loss_parts["mu"].items()
-        )
-        console.print(f"     chemical potential: {mu_text}")
-        for phase_id, phi in loss_parts["phi"].items():
-            marker = " <- stable" if phase_id in loss_parts["stable_phase_ids"] else ""
-            console.print(
-                f"     phi({str(phase_id):>10s}) = "
-                f"{_format_scalar_for_print(phi)}{marker}"
-            )
 
 
     def forward(self) -> torch.Tensor:
-        """this is defined but should not be used since there is no weights"""
-        loss_dict = self.get_loss_parts()
-        return loss_dict['stable'] + loss_dict['unstable']
+        raise RuntimeError(
+            "PhaseEquilibriumOptState requires a ThermodynamicSystem. "
+            "Use phase_equilibrium_loss_parts(state, system, ...) instead."
+        )
+
+
+def print_phi_at_equilibria(
+    loss: EquilibriumLossRecord,
+    *,
+    console=None
+) -> None:
+    if console is None:
+        from rich.console import Console
+        console = Console()
+        
+    console.print(f"{loss.mu_strategy} mu: {str(loss.equilibrium)}")
+    mu_text = ", ".join(
+        f"mu_{element}={_format_scalar_for_print(value)}"
+        for element, value in loss.mu.items()
+    )
+    console.print(f"     chemical potential: {mu_text}")
+    for phase_id, phi in loss.phi.items():
+        marker = " <- stable" if phase_id in loss.stable_phase_ids else ""
+        console.print(
+            f"     phi({str(phase_id):>10s}) = "
+            f"{_format_scalar_for_print(phi)}{marker}"
+        )
+
+
+def phase_equilibrium_loss_parts(
+    state: PhaseEquilibriumOptState,
+    system: ThermodynamicSystem,
+    *,
+    n_samples: int = 64,
+    tau: float | None = None,
+    use_softmin: bool = True,
+    n_steps: int = 6,
+    delta: float = 0.3,
+    relu_margin: float = 0.0,
+    unstable_huber_beta: float | None = 1.0,
+    scale_energy_by_rt: bool = True,
+) -> EquilibriumLossRecord:
+    temperature = torch.as_tensor(
+        state.equilibrium.temperature,
+        device=DEFAULT_DEVICE,
+        dtype=DEFAULT_TYPE,
+    )
+    if scale_energy_by_rt:
+        rt = R * temperature
+        energy_scale = float(rt.detach().cpu())
+    else:
+        rt = 1.0
+        energy_scale = 1.0
+    mu_dict = state.current_mu_dict(system)
+
+    phases_to_evaluate = tuple(system.get_competing_phases(state.elements))
+    phi_by_id = {
+        phase: system.get_grand_potential(
+            phase,
+            mu_dict,
+            temperature,
+            tau=tau,
+            use_softmin=use_softmin,
+            n_samples_each_side=n_samples,
+            n_steps=n_steps,
+            delta=delta,
+        )
+        for phase in phases_to_evaluate
+    }
+
+    phi_observed = [
+        phi_by_id[phase]
+        for phase in state.equilibrium.phases
+    ]
+    phi_all = list(phi_by_id.values())
+
+    stable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+    if phi_observed:
+        stable_total = (
+            torch.stack(phi_observed) / rt
+        ).square().sum()
+
+    unstable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+    if phi_all:
+        unstable_violation = F.relu(
+            (relu_margin - torch.stack(phi_all)) / rt
+        )
+        if unstable_huber_beta is None:
+            unstable_penalty = unstable_violation.sum()
+        else:
+            unstable_penalty = F.smooth_l1_loss(
+                unstable_violation,
+                torch.zeros_like(unstable_violation),
+                beta=unstable_huber_beta / energy_scale,
+                reduction="sum",
+            )
+        unstable_total = unstable_penalty
+
+    return EquilibriumLossRecord(
+        equilibrium=state.equilibrium,
+        mu_strategy=state.strategy,
+        mu=mu_dict,
+        phi=phi_by_id,
+        stable_phase_ids=state.stable_phase_ids,
+        stable_loss=stable_total,
+        unstable_loss=unstable_total,
+    )
