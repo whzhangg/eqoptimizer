@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Sequence, Mapping
 from torch import nn
 import numpy as np
+import dataclasses
 
 from ...utilities import R, multi_simplex_samples_dirichlet, hit_and_run_sampling
 from ...dtype import DEFAULT_DEVICE, DEFAULT_TYPE
@@ -19,18 +20,51 @@ from .cef_terms import (
     get_cef_context_and_terms_from_tdb_string,
 )
 
+@dataclasses.dataclass(frozen=True)
+class CEFConfig:
+    """Default external-facing numerical options for CEF evaluations."""
+
+    # shared sampling/min-pooling options
+    n_samples: int = 64
+    use_softmin: bool = True
+    softmin_tau: float | None = None
+
+    # grand-potential options
+    grand_potential_method: str = "EGD"
+    grand_potential_steps: int = 6
+    grand_potential_delta: float = 0.3
+    max_step_factor: float = 1.5
+
+    # fixed-composition Gibbs-energy options
+    gibbs_energy_method: str = "constrained_EGD"
+    gibbs_energy_steps: int = 6
+    gibbs_energy_delta: float = 0.3
+
+    # constrained-EGD dual solve options
+    newton_steps: int = 20
+    newton_damping: float = 1.0e-10
+    max_dual_step: float = 2.0
+    constraint_tol: float = 1.0e-8
+    dual_backtracking_steps: int = 8
+    primal_backtracking_steps: int = 6
+    composition_penalty_weight: float | None = None
+
 
 class CEF(ThermodynamicModel):
     cef_max_iter = 300
     cef_tol = 1.0e-5
     cef_eps = 1.0e-8
+    
     def __init__(self, 
         components_on_sublattices: Sequence[Sequence[str]],
         sublattice_multiplicities: Sequence[float],
         energy_terms: Sequence[CEFExcessTerm],
+        config: CEFConfig | None = None,
         *,
         name: str | None = None,
     ):
+        config = CEFConfig() if config is None else config
+
         if len(components_on_sublattices) != len(sublattice_multiplicities):
             raise ValueError(
                 "components_on_sublattices and sublattice_multiplicities "
@@ -57,6 +91,7 @@ class CEF(ThermodynamicModel):
             raise ValueError("CEF requires at least one non-vacancy element.")
 
         super().__init__(name or "cef", elements)
+        self.config = config
 
         self.y_names = y_names
         y_names_to_index = {
@@ -140,7 +175,6 @@ class CEF(ThermodynamicModel):
             reduce_by_fps=True,
             n_samples_to_sample=nsamples*10
         )
-
 
 
     def _validate_energy_terms(self) -> None:
@@ -355,7 +389,14 @@ class CEF(ThermodynamicModel):
                 temperature,
             )
 
-        return self._solve_constrained_gibbs_scipy(target_x, temperature)
+        method = self.config.gibbs_energy_method.lower()
+        if method in {"constrained_egd", "egd"}:
+            return self.gibbs_energy_by_constrained_EGD(comp, temperature)
+        if method == "scipy":
+            return self._solve_constrained_gibbs_scipy(target_x, temperature)
+        raise ValueError(
+            f"Unknown CEF Gibbs-energy method {self.config.gibbs_energy_method!r}."
+        )
     
 
     def _solve_constrained_gibbs_scipy(self, target_x, temperature: torch.Tensor):
@@ -517,16 +558,9 @@ class CEF(ThermodynamicModel):
         return amounts
 
     
-    def grand_potential_per_molar_atom(self, 
-        mu: Mapping[str, float], 
-        temperature: float, 
-        *,
-        use_softmin: bool = True,
-        tau: float | None = None, 
-        n_samples_each_side = 64,
-        n_steps: int = 6,
-        delta: float = 0.3,
-        max_step_factor: float = 1.5
+    def grand_potential_per_molar_atom(self,
+        mu: Mapping[str, float],
+        temperature: float,
     ):
         """solve grand potential
         
@@ -538,9 +572,16 @@ class CEF(ThermodynamicModel):
         softmin recomputes grand-potential values on the refined site fractions
         so gradients still flow to thermodynamic parameters and mu.
         """
+        use_softmin = self.config.use_softmin
+        tau = self.config.softmin_tau
+        n_samples_each_side = self.config.n_samples
+        n_steps = self.config.grand_potential_steps
+        delta = self.config.grand_potential_delta
+        max_step_factor = self.config.max_step_factor
+
         temperature = scalar_temperature(temperature)
         mu = get_tensor_mu(mu, self.elements)
-        
+
         sampled_y = multi_simplex_samples_dirichlet(
             self.ncomp_for_each_sublattice,
             n_samples_each_side,
@@ -811,6 +852,7 @@ class CEF(ThermodynamicModel):
         cls, 
         tdb_path: str | Path, 
         phase_name: str, 
+        config: CEFConfig | None = None,
         *,
         temperature_ref: float = 1000,
         correction_order: int | None = None,
@@ -840,5 +882,453 @@ class CEF(ThermodynamicModel):
             components,
             context.sublattice_multiplicities,
             terms,
+            config=config,
             name=phase_name,
         )
+
+
+    def gibbs_energy_by_constrained_EGD(self,
+        composition: Mapping[str, float],
+        temperature: float,
+        *,
+        sampled_y: torch.Tensor | None = None,
+        return_internal_dof: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Estimate fixed-composition Gibbs energy with constrained EGD.
+
+        The inner EGD trajectory is detached from the outer graph. The final
+        energy is recomputed on the optimized site fractions so gradients still
+        flow to thermodynamic parameters, but not through the internal solver.
+        """
+        temperature = scalar_temperature(temperature)
+        n_samples = self.config.n_samples
+        tau = self.config.softmin_tau
+        use_softmin = self.config.use_softmin
+        if sampled_y is None:
+            sampled_initial = self.sample_internal_dof_at_composition(
+                composition,
+                n_samples,
+            )
+        else:
+            sampled_initial = torch.as_tensor(
+                sampled_y,
+                device=self.multi_for_each_y.device,
+                dtype=self.multi_for_each_y.dtype,
+            )
+
+        optimized_y = self._optimize_y_constrained_gibbs_EGD(
+            sampled_initial,
+            composition,
+            temperature,
+            n_steps=self.config.gibbs_energy_steps,
+            delta=self.config.gibbs_energy_delta,
+            n_newton_steps=self.config.newton_steps,
+            newton_damping=self.config.newton_damping,
+            max_dual_step=self.config.max_dual_step,
+            constraint_tol=self.config.constraint_tol,
+            max_backtracking_steps=self.config.dual_backtracking_steps,
+            max_primal_backtracking_steps=self.config.primal_backtracking_steps,
+            composition_penalty_weight=self.config.composition_penalty_weight,
+        )
+
+        values = self._gibbs_energy_per_molar_atom_from_internal_dof(
+            optimized_y,
+            temperature,
+        )
+        if use_softmin:
+            if tau is None:
+                if values.numel() == 1:
+                    tau = 1.0
+                else:
+                    tau = 1.0 / math.log(values.numel())
+            energy = -tau * torch.logsumexp(-values / tau, dim=0)
+        else:
+            energy = torch.min(values)
+
+        if return_internal_dof:
+            return energy, optimized_y.detach()
+        return energy
+
+
+    def _optimize_y_constrained_gibbs_EGD(
+        self,
+        sampled_y: torch.Tensor,
+        composition: Mapping[str, float],
+        temperature: float,
+        *,
+        n_steps: int = 6,
+        delta: float = 0.3,
+        n_newton_steps: int = 20,
+        newton_damping: float = 1.0e-10,
+        max_dual_step: float = 2.0,
+        constraint_tol: float = 1.0e-8,
+        max_backtracking_steps: int = 8,
+        max_primal_backtracking_steps: int = 6,
+        composition_penalty_weight: float | None = None,
+    ) -> torch.Tensor:
+        """Optimize feasible site fractions at fixed composition using EGD.
+
+        Sublattice normalization is enforced by softmax-like normalization on
+        each sublattice, while the supplied composition constraints are enforced
+        by solving the dual variables with batched Newton iterations. A mild
+        composition penalty can also be included in the search gradient to pull
+        numerically drifting iterates back toward the target composition.
+        """
+        temperature = scalar_temperature(temperature)
+        y = torch.as_tensor(
+            sampled_y,
+            device=self.multi_for_each_y.device,
+            dtype=self.multi_for_each_y.dtype,
+        )
+        squeeze_output = False
+        if y.ndim == 1:
+            y = y.unsqueeze(0) # add a first dimension in the case when only one sample is given
+            squeeze_output = True
+        if y.ndim != 2 or y.shape[-1] != len(self.y_names):
+            raise ValueError(
+                f"Expected sampled_y with trailing dimension {len(self.y_names)}, "
+                f"got shape {tuple(y.shape)}."
+            )
+        target_x = torch.as_tensor(
+            [composition.get(element, 0.0) for element in self.elements],
+            device=y.device,
+            dtype=y.dtype,
+        )
+        target_x = target_x.clamp_min(1.0e-12)
+        target_x = target_x / target_x.sum().clamp_min(1.0e-12)
+
+        n_constraints = max(len(self.elements) - 1, 0)
+        if int(n_steps) <= 0:
+            return y.squeeze(0) if squeeze_output else y
+        if composition_penalty_weight is None:
+            composition_penalty = 10.0 * torch.abs(R * temperature).clamp_min(1.0)
+        else:
+            composition_penalty = torch.as_tensor(
+                composition_penalty_weight,
+                device=y.device,
+                dtype=y.dtype,
+            )
+
+        if n_constraints:
+            total_multiplicity = sum(self.sublattice_multiplicities)
+            constraint_matrix = torch.zeros(
+                (n_constraints, len(self.y_names)),
+                device=y.device,
+                dtype=y.dtype,
+            )
+            constraint_rhs = target_x[:n_constraints] * total_multiplicity
+            element_to_constraint = {
+                element: index
+                for index, element in enumerate(self.elements[:-1])
+            }
+            for y_index, (component, sublattice_index) in enumerate(self.y_names):
+                multiplicity = self.sublattice_multiplicities[sublattice_index]
+                if component in element_to_constraint:
+                    constraint_matrix[
+                        element_to_constraint[component],
+                        y_index,
+                    ] = multiplicity
+                elif component.upper() == "VA":
+                    constraint_matrix[:, y_index] = (
+                        multiplicity * target_x[:n_constraints]
+                    )
+        else:
+            constraint_matrix = torch.empty(
+                (0, len(self.y_names)),
+                device=y.device,
+                dtype=y.dtype,
+            )
+            constraint_rhs = torch.empty(0, device=y.device, dtype=y.dtype)
+
+        optimized_y = y.detach()
+        dual_mu = None
+        with torch.enable_grad():
+            for _ in range(int(n_steps)):
+                optimized_y = optimized_y.detach().requires_grad_(True)
+                values = self._gibbs_energy_per_molar_atom_from_internal_dof(
+                    optimized_y,
+                    temperature,
+                )
+                if n_constraints:
+                    composition_residual = (
+                        self._composition_from_internal_dof(optimized_y)
+                        - target_x
+                    )
+                    values = values + composition_penalty * (
+                        composition_residual.square().sum(dim=-1)
+                    )
+                grad_y = torch.autograd.grad(values.sum(), optimized_y)[0]
+                grad_y = torch.nan_to_num(
+                    grad_y,
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+
+                scale = torch.zeros(
+                    (optimized_y.shape[0], 1),
+                    device=optimized_y.device,
+                    dtype=optimized_y.dtype,
+                )
+                column_start = 0
+                for n_components in self.ncomp_for_each_sublattice:
+                    column_stop = column_start + n_components
+                    w = optimized_y[..., column_start:column_stop].detach()
+                    g = grad_y[..., column_start:column_stop].detach()
+                    g_bar = (w * g).sum(dim=-1, keepdim=True)
+                    scale = torch.maximum(
+                        scale,
+                        (w * (g - g_bar).abs()).amax(dim=-1, keepdim=True),
+                    )
+                    column_start = column_stop
+
+                eta = delta / scale.clamp_min(self.cef_eps)
+                previous_y = optimized_y.detach()
+                previous_mu = None if dual_mu is None else dual_mu.detach()
+                updated_y = previous_y
+                updated_mu = previous_mu
+                accepted = torch.zeros(
+                    (previous_y.shape[0], 1),
+                    device=previous_y.device,
+                    dtype=torch.bool,
+                )
+                for backtrack_index in range(int(max_primal_backtracking_steps) + 1):
+                    eta_try = eta * (0.5 ** backtrack_index)
+                    candidate_y, candidate_mu, residual_norm = self._constrained_egd_update(
+                        previous_y,
+                        grad_y.detach(),
+                        eta_try,
+                        previous_mu,
+                        self.ncomp_for_each_sublattice,
+                        constraint_matrix,
+                        constraint_rhs,
+                        n_newton_steps=n_newton_steps,
+                        newton_damping=newton_damping,
+                        max_dual_step=max_dual_step,
+                        constraint_tol=constraint_tol,
+                        max_backtracking_steps=max_backtracking_steps,
+                        eps=self.cef_eps,
+                    )
+                    newly_accepted = (~accepted) & (residual_norm <= constraint_tol)
+                    updated_y = torch.where(newly_accepted, candidate_y, updated_y)
+                    if candidate_mu is not None:
+                        if updated_mu is None:
+                            updated_mu = torch.zeros_like(candidate_mu)
+                        updated_mu = torch.where(
+                            newly_accepted,
+                            candidate_mu,
+                            updated_mu,
+                        )
+                    accepted = accepted | newly_accepted
+                    if bool(torch.all(accepted)):
+                        break
+
+                if bool(torch.any(accepted)):
+                    optimized_y = updated_y.detach()
+                    dual_mu = updated_mu
+                else:
+                    optimized_y = previous_y
+                    dual_mu = previous_mu
+
+        if squeeze_output:
+            return optimized_y.squeeze(0)
+        return optimized_y
+
+
+    @staticmethod
+    def _normalize_sublattice_logits(
+        logits: torch.Tensor,
+        ncomp_for_each_sublattice: Sequence[int],
+    ) -> torch.Tensor:
+        """normalize for all sublattices"""
+        parts = []
+        column_start = 0
+        for n_components in ncomp_for_each_sublattice:
+            column_stop = column_start + n_components
+            parts.append(torch.softmax(logits[..., column_start:column_stop], dim=-1))
+            column_start = column_stop
+        return torch.cat(parts, dim=-1)
+
+
+    @staticmethod
+    def _constrained_egd_update(
+        current_y: torch.Tensor,
+        grad_y: torch.Tensor,
+        eta: torch.Tensor,
+        initial_mu: torch.Tensor | None,
+        ncomp_for_each_sublattice: Sequence[int],
+        constraint_matrix: torch.Tensor,
+        constraint_rhs: torch.Tensor,
+        *,
+        n_newton_steps: int,
+        newton_damping: float,
+        max_dual_step: float,
+        constraint_tol: float,
+        max_backtracking_steps: int,
+        eps: float,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
+        n_constraints = constraint_matrix.shape[0]
+        base_logits = current_y.clamp_min(eps).log() - eta * grad_y
+        if n_constraints == 0:
+            residual_norm = torch.zeros(
+                (current_y.shape[0], 1),
+                device=current_y.device,
+                dtype=current_y.dtype,
+            )
+            return (
+                CEF._normalize_sublattice_logits(
+                    base_logits,
+                    ncomp_for_each_sublattice,
+                ),
+                None,
+                residual_norm,
+            )
+
+        batch = current_y.shape[0]
+        if initial_mu is None:
+            mu = torch.zeros(
+                (batch, n_constraints),
+                device=current_y.device,
+                dtype=current_y.dtype,
+            )
+        else:
+            mu = initial_mu.detach().clone()
+        eye = torch.eye(
+            n_constraints,
+            device=current_y.device,
+            dtype=current_y.dtype,
+        )
+
+        y_mu = current_y
+        for _ in range(int(n_newton_steps)):
+            y_mu, residual = CEF._y_and_constraint_residual_from_dual_mu(
+                base_logits,
+                mu,
+                ncomp_for_each_sublattice,
+                constraint_matrix,
+                constraint_rhs,
+            )
+            residual_norm = torch.linalg.vector_norm(
+                residual,
+                dim=-1,
+                keepdim=True,
+            ) # compute residual
+            if bool(torch.all(residual_norm <= constraint_tol)):
+                break
+
+            jacobian = CEF._constraint_residual_jacobian(
+                y_mu,
+                ncomp_for_each_sublattice,
+                constraint_matrix,
+            )
+            linear_system = jacobian - newton_damping * eye
+            rhs = -residual.unsqueeze(-1)
+            try:
+                delta_mu = torch.linalg.solve(linear_system, rhs).squeeze(-1)
+            except RuntimeError:
+                delta_mu = torch.linalg.lstsq(linear_system, rhs).solution.squeeze(-1)
+            delta_mu = delta_mu.clamp(-max_dual_step, max_dual_step)
+
+            accepted = torch.zeros(
+                (batch, 1),
+                device=current_y.device,
+                dtype=torch.bool,
+            )
+            step_scale = torch.ones(
+                (batch, 1),
+                device=current_y.device,
+                dtype=current_y.dtype,
+            )
+            best_mu = mu
+            best_y = y_mu
+            best_norm = residual_norm
+            for _ in range(int(max_backtracking_steps)):
+                trial_mu = mu + step_scale * delta_mu
+                trial_y, trial_residual = CEF._y_and_constraint_residual_from_dual_mu(
+                    base_logits,
+                    trial_mu,
+                    ncomp_for_each_sublattice,
+                    constraint_matrix,
+                    constraint_rhs,
+                )
+                trial_norm = torch.linalg.vector_norm(
+                    trial_residual,
+                    dim=-1,
+                    keepdim=True,
+                )
+                accept = (~accepted) & (
+                    (trial_norm < best_norm)
+                    | (trial_norm <= constraint_tol)
+                )
+                best_mu = torch.where(accept, trial_mu, best_mu)
+                best_y = torch.where(accept, trial_y, best_y)
+                best_norm = torch.where(accept, trial_norm, best_norm)
+                accepted = accepted | accept
+                if bool(torch.all(accepted)):
+                    break
+                step_scale = torch.where(
+                    accepted,
+                    step_scale,
+                    0.5 * step_scale,
+                )
+
+            mu = best_mu
+            y_mu = best_y
+
+        final_residual = y_mu @ constraint_matrix.mT - constraint_rhs
+        final_residual_norm = torch.linalg.vector_norm(
+            final_residual,
+            dim=-1,
+            keepdim=True,
+        )
+        return y_mu, mu, final_residual_norm
+
+
+    @staticmethod
+    def _y_and_constraint_residual_from_dual_mu(
+        base_logits: torch.Tensor,
+        dual_mu: torch.Tensor,
+        ncomp_for_each_sublattice: Sequence[int],
+        constraint_matrix: torch.Tensor,
+        constraint_rhs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        logits = base_logits - dual_mu @ constraint_matrix
+        candidate_y = CEF._normalize_sublattice_logits(
+            logits,
+            ncomp_for_each_sublattice,
+        )
+        candidate_residual = candidate_y @ constraint_matrix.mT - constraint_rhs
+        return candidate_y, candidate_residual
+
+
+    @staticmethod
+    def _constraint_residual_jacobian(
+        y: torch.Tensor,
+        ncomp_for_each_sublattice: Sequence[int],
+        constraint_matrix: torch.Tensor,
+    ) -> torch.Tensor:
+        batch = y.shape[0]
+        n_constraints = constraint_matrix.shape[0]
+        jacobian = torch.zeros(
+            (batch, n_constraints, n_constraints),
+            device=y.device,
+            dtype=y.dtype,
+        )
+        column_start = 0
+        for n_components in ncomp_for_each_sublattice:
+            column_stop = column_start + n_components
+            w = y[..., column_start:column_stop]
+            local_a = constraint_matrix[:, column_start:column_stop]
+            mean_a = w @ local_a.mT
+            second_moment = torch.einsum(
+                "bi,ai,ci->bac",
+                w,
+                local_a,
+                local_a,
+            )
+            jacobian = jacobian + (
+                mean_a[:, :, None] * mean_a[:, None, :]
+                - second_moment
+            )
+            column_start = column_stop
+        return jacobian

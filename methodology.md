@@ -304,6 +304,10 @@ e^{-1-\lambda} = x_i^{(t)} e^{-\eta g_i - 1 - \lambda} = \frac{x_i^{(t)} e^{-\et
 }
 $$
 
+### Exponential gradient descent with linear constraints.
+
+Gibbs energy minimization require
+
 ### Envelope theorem
 
 Envelope theorem ([Kevin Wainwright](https://www.sfu.ca/~wainwrig/Econ331/env-theorem2.pdf)) gives the derivative of a function $V$ that has the following form: 
@@ -338,3 +342,66 @@ $$
 $$
 again evaluated at $\mathbf{x}^*(\boldsymbol{\omega})$. Thus, the envelope theorem allow us to calculate the derivative of the loss function without requiring full differentiation through the entire minimization.
 
+#### Sampling internal coordinates with constraints
+
+Here, we consider compound energy formalism models in which internal coordinate denoted as $y_{i,A}$ is the site occupancy of component $A$ at the $i$-th sublattice. Given a chemical composition $(x_A,x_B,\cdots)$ summing up to one, we consider random uniform sampling of internal coordinates that follows this given composition. Hit-and-run sampling method is used. We also denote the sublattice multiplicities as $m_i$. First, we can write the following constraints:
+$$
+\mathbf{y}\ge 0; \quad \quad \sum_A y_{i,A} = 1\ \text{for each sublattice $i$}\\
+\sum_i m_i y_{i,A} = x_A \left(\sum_{B\neq \mathrm{Va}}\sum_i m_i y_{i,B}\right) = x_A\left(\sum_i m_i-\sum_i m_i y_{i,\mathrm{Va}})\right) \quad\quad\text{for $(N-1)$ elements $A$}
+$$
+Since all composition sum to 1, only $N-1$ number of composition constraints are necessary. The linear constraints can be collected so that we can write:
+$$
+\mathbf{A}\mathbf{y} = \mathbf{B}
+$$
+Disregarding the inequality constraints. All solutions to the equation can be written in the following form:
+$$
+\mathbf{y} = \mathbf{y}_0 + \mathbf{Z} \cdot \mathbf{j}
+$$
+where $\mathbf{Z}$ is the matrix with each column corresponding to basis in the null space of $\mathbf{A}$, and $\mathbf{j}$ is coefficient vector that indicate vectors in the null space. $\mathbf{y}_0$ can be any feasible solution. In the hit-and-run sampling, we start from a feasible point, and select a random direction in the null space given by $\mathbf{v} = \mathbf{Z}\cdot \mathbf{j}'$. From $\mathbf{y}_0$, a line is draw in this direction:
+$$
+\mathbf{y} = \mathbf{y}_0 + t \mathbf{v} \quad\quad t_{\mathrm{min}} \le t \le t_{\mathrm{max}}
+$$
+where the lower and upper limits given by the requirement that any of the value of $\mathbf{y}\ge 0$, and the next point can draw from a uniform distribution along this line, and this can be continued to draw $N$ samples. After than, a subset of samples can be selected randomly or by fartherest point sampling.
+
+#### Minimization of Gibbs energy
+
+Exponential gradient descent enforces the constraints on the site fraction of $\mathbf{y}$, however, to determine Gibbs energy, $\mathbf{y}$ that need to follow the external composition constraints $(x_A,x_B,\cdots)$. Writing composition constraints as:
+$$
+\mathbf{A} \mathbf{y} - \mathbf{B} = 0
+$$
+exactly as above, generalized gradient descent can be performed similar to above but with additional constraints, we explicitly consider the case where we have sublattices denoted by index $s$:
+$$
+L = \eta \sum_{is} g_{is} y_{is}^{(t+1)} + \sum_{is} y_{is}^{(t+1)} \log\left(\frac{y_{is}^{(t+1)}}{y_{is}^{(t)}}\right) + \sum_s \lambda_s \left(\sum_{i} y_{is}^{(t+1)} - 1\right) + \boldsymbol{\mu} (\mathbf{A} \mathbf{y}^{(t+1)} - \mathbf{B})
+$$
+where $\boldsymbol{\mu}$ is vector of $N-1$ multiplier. The stationary point can be given by:
+$$
+\eta g_{is} + \log\left(\frac{y_{is}^{(t+1)}}{y_{is}^{(t)}}\right) + 1 + \lambda_s + \sum_{a} \mu_a A_{a,is} = 0;\quad \sum_iy_{is}^{(t+1)} - 1;\quad \mathbf{A} \mathbf{y}^{(t+1)} = \mathbf{B}
+$$
+leading to:
+$$
+\log y_{is}^{(t+1)} = \log y_{is}^{(t)}  -\eta g_{is} - (1 + \lambda_s + \sum_a \mu_a A_{a,is});\quad y_{is}^{(t+1)} = \frac{y_{is}^{(t)} e^{-\eta g_i - \sum_a\mu_a A_{a,is}}}{e^{1+\lambda_s}}
+$$
+we see that $e^{1+\lambda_s}$ term is the normalizer for each sublattice. So $\lambda_s$ can be elimitated:
+$$
+y_{is}^{(t+1)} = \frac{y_{is}^{(t)} e^{-\eta g_{is} - \sum_a\mu_a A_{a,{is}}}}{\sum_{j} y_{js}^{(t)} e^{-\eta g_{js} - \sum_a\mu_a A_{a,js}}}
+$$
+Next, we still need to determine the set of $\mu$. They are determined by the nonlinear set of equations. For constraints indexed by $b$:
+$$
+F_b(\boldsymbol{\mu}) = \sum_{is} A_{b,is} y_{is}^{(t+1)} - B_b = 0
+$$
+Newton's method can be used to iteratively solve the non-linear equations. First: we find:
+$$
+F_b(\boldsymbol{\mu}') + \sum_{a} \frac{\partial F_b(\boldsymbol{\mu}')}{\partial \mu_{a}} \Delta \mu_{a} = 0;\ \cdots \quad \Rightarrow \quad \mathbf{F}(\boldsymbol{\mu}') + \mathbf{J} (\boldsymbol{\mu}') \Delta \boldsymbol{\mu} = 0
+$$
+where $\mathbf{J}$ is the Jacobian with matrix elements $\mathbf{J}_{ab} = \partial F_a / \partial \mu_b$. The Newton update can be found by $\Delta \boldsymbol{\mu} = -\mathbf{J}^{-1} (\boldsymbol{\mu}') \mathbf{F}(\boldsymbol{\mu}')$.
+The Jacobian matrix elements is given by:
+$$
+\frac{\partial F_b}{\partial \mu_a} = \sum_{is} A_{b,is} \frac{\partial y_{is}^{(t+1)}}{\partial \mu_a} \\
+\frac{\partial y_{is}^{(t+1)}}{\partial \mu_a} = y_{is}^{(t+1)} \left( \sum_j A_{a,js} y^{(t+1)}_{js} - A_{a,is}\right)
+$$
+where we note that $\mathbf{y}^{(t+1)}$ is a function of $\boldsymbol{\mu}$.  
+
+Avoiding repeated initializing of $y$:
+- for grand potential, $y$ is independent of any constraints, so it can be cached. However, to be above to remain global, we can perhaps keep all the initial grid plus the evloving grids. In this case, we can guarantee that minimal can be found quite easily because of the warm start while still keep a global prespective.
+- The same can be done for $y$ sampled in gibbs potential. we just make a single sampling and let $y$ evolve. However, we need to be careful if the composition constraints start to deviate. perhaps it is fine if we add penalty. We can keep a additional pool of $y$. During the optimization, if some y deviate from composition, we replace it with new ones.
+- All the sames are stored detached. 

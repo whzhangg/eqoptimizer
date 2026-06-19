@@ -1,5 +1,6 @@
 from .cef_model import (
     CEF,
+    CEFConfig,
 )
 from .cef_terms import (
     CEFContext,
@@ -15,6 +16,7 @@ from .polynomial import TempPolynomial, TempPolynomialwCorrection
 
 __all__ = [
     "CEF",
+    "CEFConfig",
     "CEFContext",
     "CEFExcessTerm",
     "EndMemberTerm",

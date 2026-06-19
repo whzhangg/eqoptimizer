@@ -51,13 +51,6 @@ class ThermodynamicSystem(nn.Module, ABC):
         phase_id: PhaseID,
         mu: Mapping[str, float], 
         temperature: float, 
-        *,
-        use_softmin: bool = True,
-        tau: float | None = None, 
-        n_samples_each_side = 64,
-        n_steps: int = 6,
-        delta: float = 0.3,
-        max_step_factor: float = 1.5
     ) -> Tensor:
         """Return phase grand potential at chemical potential and temperature."""
 
@@ -67,22 +60,9 @@ class ThermodynamicSystem(nn.Module, ABC):
         phase_id: PhaseID,
         mu: Mapping[str, float],
         temperature: float,
-        *,
-        use_softmin: bool = True,
-        tau: float | None = None,
-        n_samples_each_side=64,
-        n_steps: int = 6,
-        delta: float = 0.3,
-        max_step_factor: float = 1.5,
     ) -> Tensor:
         return self.grand_potential_per_molar_atom_for_phase(
             phase_id,
             mu,
             temperature,
-            use_softmin=use_softmin,
-            tau=tau,
-            n_samples_each_side=n_samples_each_side,
-            n_steps=n_steps,
-            delta=delta,
-            max_step_factor=max_step_factor,
         )

@@ -26,14 +26,7 @@ class ThermodynamicModel(nn.Module, ABC):
     def grand_potential_per_molar_atom(
         self,
         mu: Mapping[str, float], 
-        temperature: float, 
-        *,
-        use_softmin: bool = True,
-        tau: float | None = None, 
-        n_samples_each_side = 64,
-        n_steps: int = 6,
-        delta: float = 0.3,
-        max_step_factor: float = 1.5
+        temperature: float,
     ) -> Tensor:
         """Return phase grand potential at chemical potential and temperature."""
 

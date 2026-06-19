@@ -3,6 +3,7 @@ from .system_abc import ThermodynamicSystem
 from .ensemble_models import EnsembleSystem
 from .calphad.cef_model import (
     CEF,
+    CEFConfig,
 )
 from .calphad.cef_terms import (
     CEFContext,
@@ -21,6 +22,7 @@ __all__ = [
     "ThermodynamicSystem",
     "EnsembleSystem",
     "CEF",
+    "CEFConfig",
     "CEFContext",
     "CEFExcessTerm",
     "EndMemberTerm",

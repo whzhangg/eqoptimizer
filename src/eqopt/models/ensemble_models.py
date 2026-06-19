@@ -54,25 +54,9 @@ class EnsembleSystem(ThermodynamicSystem):
         phase_id: PhaseID,
         mu: Mapping[str, float], 
         temperature: float, 
-        *,
-        use_softmin: bool = True,
-        tau: float | None = None, 
-        n_samples_each_side = 64,
-        n_steps: int = 6,
-        delta: float = 0.3,
-        max_step_factor: float = 1.5
     ) -> Tensor:
         model = self.key_to_model[self._get_phase_key(phase_id)]
-        return model.grand_potential_per_molar_atom(
-            mu, 
-            temperature, 
-            use_softmin=use_softmin,
-            tau=tau, 
-            n_samples_each_side=n_samples_each_side,
-            n_steps=n_steps,
-            delta=delta,
-            max_step_factor=max_step_factor
-        )
+        return model.grand_potential_per_molar_atom(mu, temperature)
 
 
     def save_model_to_pt(self, path: str | Path) -> None:
