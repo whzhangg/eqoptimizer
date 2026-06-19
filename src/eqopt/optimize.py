@@ -105,11 +105,6 @@ def _aggregate_loss_parts(
         record = phase_equilibrium_loss_parts(
             equilibrium_losses[equilibrium_index],
             system,
-            n_samples=config.n_samples,
-            tau=config.tau,
-            use_softmin=config.use_softmin,
-            n_steps=config.n_steps,
-            delta=config.delta,
             relu_margin=config.relu_margin,
             unstable_huber_beta=config.unstable_huber_beta,
             scale_energy_by_rt=config.scale_energy_by_rt,
@@ -436,10 +431,6 @@ def optimize_thermodynamic_parameters(
                 max_iter=config.mu_init_max_iter,
                 cosine_decay=config.mu_init_cosine_decay,
                 convergence_tol=config.mu_convergence_tol,
-                n_samples=config.n_samples,
-                tau=config.tau,
-                use_softmin=config.use_softmin,
-                delta=config.delta,
                 relu_margin=config.relu_margin,
                 unstable_huber_beta=config.unstable_huber_beta,
                 scale_energy_by_rt=config.scale_energy_by_rt,
@@ -480,13 +471,8 @@ def optimize_thermodynamic_parameters(
             f"lr schedule = cosine decay to {config.min_lr_factor:g} * lr"
         )
     console.print(f"batch size = {effective_batch_size}")
-    console.print(f"sampling density = {config.n_samples}")
-    console.print(f"tau = {config.tau}")
-    console.print(f"use softmin = {config.use_softmin}")
     console.print(f"scale energy by RT = {config.scale_energy_by_rt}")
     console.print(f"unstable huber beta = {config.unstable_huber_beta}")
-    console.print(f"exp-gradient steps = {config.n_steps}")
-    console.print(f"exp-gradient delta = {config.delta}")
     console.print(f"stable weight = {config.stable_weight}")
     console.print(f"unstable weight = {config.unstable_weight}")
     console.print(f"regularization weight = {config.regularization_weight}")

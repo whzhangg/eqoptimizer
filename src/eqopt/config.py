@@ -15,15 +15,10 @@ class OptimizationConfig:
     unstable_weight: float = 1.0
     regularization_weight: float = 1.0e-12
     regularize_difference: bool = False
-    
-    n_samples: int = 64
-    tau: float | None = None
-    use_softmin: bool = True
+
     relu_margin: float = 0.0
     unstable_huber_beta: float | None = 1.0
     scale_energy_by_rt: bool = True
-    n_steps: int = 6
-    delta: float = 0.3
 
     mu_convergence_tol: float = 50.0
     mu_init_lr: float = 5000.0
