@@ -5,7 +5,7 @@ from typing import Sequence, Mapping
 from torch import nn
 import numpy as np
 
-from ...utilities import R, multi_simplex_samples_dirichlet
+from ...utilities import R, multi_simplex_samples_dirichlet, hit_and_run_sampling
 from ...dtype import DEFAULT_DEVICE, DEFAULT_TYPE
 from ..shared import (
     get_tensor_mu,
@@ -90,6 +90,57 @@ class CEF(ThermodynamicModel):
             torch.cat(multi_for_each_y),
             persistent=False,
         )
+
+
+    def sample_internal_dof_at_composition(
+        self,
+        composition: Mapping[str, float],
+        nsamples: int,
+    ) -> torch.Tensor:
+        """Sample site fractions satisfying sublattice and composition constraints."""
+        device = self.multi_for_each_y.device
+        dtype = self.multi_for_each_y.dtype
+        target_x = torch.as_tensor(
+            [composition.get(element, 0.0) for element in self.elements],
+            device=device,
+            dtype=dtype,
+        )
+        target_x = target_x.clamp_min(1.0e-12)
+        target_x = target_x / target_x.sum().clamp_min(1.0e-12)
+
+        n_sublattice = len(self.sublattice_multiplicities)
+        n_total_multiplicity = sum(self.sublattice_multiplicities)
+        ncols = len(self.y_names)
+        nrows = len(self.sublattice_multiplicities) + len(self.elements) - 1
+        c_matrix = torch.zeros((nrows, ncols), device=device, dtype=dtype)
+        d_matrix = torch.zeros((nrows), device=device, dtype=dtype)
+
+        d_matrix[0:len(self.sublattice_multiplicities)] = 1.0
+        ele_index = {}
+        for iele, ele in enumerate(self.elements[:-1]):
+            d_matrix[n_sublattice+iele] = target_x[iele] * n_total_multiplicity
+            ele_index[ele] = iele
+
+        for (comp, isub), yindex in self.context.y_names_to_index.items():
+            c_matrix[isub, yindex] = 1.0
+            if comp in ele_index:
+                c_matrix[n_sublattice+ele_index[comp], yindex] \
+                    = self.sublattice_multiplicities[isub]
+            elif comp.upper() == 'VA':
+                for ele in self.elements[:-1]:
+                    c_matrix[n_sublattice+ele_index[ele], yindex] = (
+                        self.sublattice_multiplicities[isub]
+                        * target_x[ele_index[ele]]
+                    )
+
+        return hit_and_run_sampling(
+            c_matrix,
+            d_matrix,
+            n_samples_final=nsamples,
+            reduce_by_fps=True,
+            n_samples_to_sample=nsamples*10
+        )
+
 
 
     def _validate_energy_terms(self) -> None:
