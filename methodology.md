@@ -344,7 +344,7 @@ again evaluated at $\mathbf{x}^*(\boldsymbol{\omega})$. Thus, the envelope theor
 
 #### Sampling internal coordinates with constraints
 
-Here, we consider compound energy formalism models in which internal coordinate denoted as $y_{i,A}$ is the site occupancy of component $A$ at the $i$-th sublattice. Given a chemical composition $(x_A,x_B,\cdots)$ summing up to one, we consider random uniform sampling of internal coordinates that follows this given composition. Hit-and-run sampling method is used. We also denote the sublattice multiplicities as $m_i$. First, we can write the following constraints:
+Here, we consider compound energy formalism models in which internal coordinate denoted as $y_{i,A}$ is the site occupancy of component $A$ at the $i$-th sublattice. Given a chemical composition $(x_A,x_B,\cdots)$ summing up to one, we consider random uniform sampling of internal coordinates that follows this given composition. Hit-and-run sampling method is used (see [Chen 2018](https://jmlr.csail.mit.edu/papers/volume19/18-158/18-158.pdf)). We also denote the sublattice multiplicities as $m_i$. First, we can write the following constraints:
 $$
 \mathbf{y}\ge 0; \quad \quad \sum_A y_{i,A} = 1\ \text{for each sublattice $i$}\\
 \sum_i m_i y_{i,A} = x_A \left(\sum_{B\neq \mathrm{Va}}\sum_i m_i y_{i,B}\right) = x_A\left(\sum_i m_i-\sum_i m_i y_{i,\mathrm{Va}})\right) \quad\quad\text{for $(N-1)$ elements $A$}
@@ -357,7 +357,7 @@ Disregarding the inequality constraints. All solutions to the equation can be wr
 $$
 \mathbf{y} = \mathbf{y}_0 + \mathbf{Z} \cdot \mathbf{j}
 $$
-where $\mathbf{Z}$ is the matrix with each column corresponding to basis in the null space of $\mathbf{A}$, and $\mathbf{j}$ is coefficient vector that indicate vectors in the null space. $\mathbf{y}_0$ can be any feasible solution. In the hit-and-run sampling, we start from a feasible point, and select a random direction in the null space given by $\mathbf{v} = \mathbf{Z}\cdot \mathbf{j}'$. From $\mathbf{y}_0$, a line is draw in this direction:
+where $\mathbf{Z}$ is the matrix with each column corresponding to basis in the null space of $\mathbf{A}$, and $\mathbf{j}$ is coefficient vector that indicate vectors in the null space. $\mathbf{y}_0$ can be any feasible solution. The sampling is thus performed in a polytope: $\mathbf{y}_0 + \mathbf{Z} \cdot \mathbf{j}\ge 0$.In the hit-and-run sampling, we start from a feasible point, and select a random direction in the null space given by $\mathbf{v} = \mathbf{Z}\cdot \mathbf{j}'$. From $\mathbf{y}_0$, a line is draw in this direction:
 $$
 \mathbf{y} = \mathbf{y}_0 + t \mathbf{v} \quad\quad t_{\mathrm{min}} \le t \le t_{\mathrm{max}}
 $$

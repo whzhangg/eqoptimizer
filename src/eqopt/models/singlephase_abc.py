@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Sequence, Mapping
+from typing import Any, Sequence, Mapping
 
 from torch import Tensor, nn
 
@@ -13,20 +13,30 @@ class ThermodynamicModel(nn.Module, ABC):
         self.elements = tuple(elements) # external elements without vacancy
 
 
+    def create_runtime_data(self) -> Any:
+        """Return model-specific transient data for one optimization context."""
+        return None
+
+
     @abstractmethod
-    def gibbs_energy_per_molar_atom(self, comp: Mapping[str, float], temperature: float) -> Tensor:
+    def gibbs_energy_per_molar_atom(
+        self,
+        comp: Mapping[str, float],
+        temperature: float,
+        runtime_data: Any = None,
+    ) -> Tensor:
         """Return molar Gibbs energy at imposed composition and temperature."""
 
 
-    def forward(self, comp, temperature: float) -> Tensor:
-        return self.gibbs_energy_per_molar_atom(comp, temperature)
+    def forward(self, comp, temperature: float, runtime_data: Any = None) -> Tensor:
+        return self.gibbs_energy_per_molar_atom(comp, temperature, runtime_data)
 
 
     @abstractmethod
     def grand_potential_per_molar_atom(
         self,
-        mu: Mapping[str, float], 
+        mu: Mapping[str, float],
         temperature: float,
+        runtime_data: Any = None,
     ) -> Tensor:
         """Return phase grand potential at chemical potential and temperature."""
-

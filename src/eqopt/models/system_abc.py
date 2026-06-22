@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Sequence, Mapping, Set, Collection
+from typing import Any, Sequence, Mapping, Set, Collection
 from torch import Tensor, nn
 
 from ..phase import PhaseID
@@ -19,15 +19,24 @@ class ThermodynamicSystem(nn.Module, ABC):
         return [phase for phase in self.phase_ids if set(phase.elements) <= ele_set]
 
     
-    def forward(self, phase_id: PhaseID, comp, temperature: float) -> Tensor:
-        return self.gibbs_energy_per_molar_atom_for_phase(phase_id, comp, temperature)
+    def forward(
+        self,
+        phase_id: PhaseID,
+        comp,
+        temperature: float,
+        runtime_data: Any = None,
+    ) -> Tensor:
+        return self.gibbs_energy_per_molar_atom_for_phase(
+            phase_id, comp, temperature, runtime_data)
 
 
     @abstractmethod
-    def gibbs_energy_per_molar_atom_for_phase(self, 
-        phase_id: PhaseID, 
-        comp: Mapping[str, float], 
-        temperature: float
+    def gibbs_energy_per_molar_atom_for_phase(
+        self,
+        phase_id: PhaseID,
+        comp: Mapping[str, float],
+        temperature: float,
+        runtime_data: Any = None,
     ) -> Tensor:
         """Return molar Gibbs energy at imposed composition and temperature."""
     
@@ -37,11 +46,13 @@ class ThermodynamicSystem(nn.Module, ABC):
         phase_id: PhaseID,
         comp: Mapping[str, float],
         temperature: float,
+        runtime_data: Any = None,
     ) -> Tensor:
         return self.gibbs_energy_per_molar_atom_for_phase(
             phase_id,
             comp,
             temperature,
+            runtime_data
         )
 
 
@@ -49,8 +60,9 @@ class ThermodynamicSystem(nn.Module, ABC):
     def grand_potential_per_molar_atom_for_phase(
         self,
         phase_id: PhaseID,
-        mu: Mapping[str, float], 
-        temperature: float, 
+        mu: Mapping[str, float],
+        temperature: float,
+        runtime_data: Any = None,
     ) -> Tensor:
         """Return phase grand potential at chemical potential and temperature."""
 
@@ -60,9 +72,11 @@ class ThermodynamicSystem(nn.Module, ABC):
         phase_id: PhaseID,
         mu: Mapping[str, float],
         temperature: float,
+        runtime_data: Any = None,
     ) -> Tensor:
         return self.grand_potential_per_molar_atom_for_phase(
             phase_id,
             mu,
             temperature,
+            runtime_data
         )

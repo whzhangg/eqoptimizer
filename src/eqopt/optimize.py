@@ -86,6 +86,27 @@ def _collect_trainable_parameters(
     return parameters
 
 
+def _save_equilibrium_states_without_runtime_data(
+    equilibrium_states: Sequence[PhaseEquilibriumOptState],
+    path: str | Path,
+) -> None:
+    runtime_data_by_index = [
+        getattr(eq_state, "runtime_data", None)
+        for eq_state in equilibrium_states
+    ]
+    try:
+        for eq_state in equilibrium_states:
+            eq_state.clear_runtime_data()
+        torch.save(equilibrium_states, path)
+    finally:
+        for eq_state, runtime_data in zip(
+            equilibrium_states,
+            runtime_data_by_index,
+            strict=True,
+        ):
+            eq_state.runtime_data = runtime_data
+
+
 def _aggregate_loss_parts(
     equilibrium_losses: Sequence[PhaseEquilibriumOptState],
     batch_indices: Sequence[int],
@@ -534,8 +555,14 @@ def optimize_thermodynamic_parameters(
         state.update_from_runtime(optimizer, scheduler)
         torch.save(system, best_model_path)
         torch.save(system, last_model_path)
-        torch.save(equilibrium_states, best_eqstate_path)
-        torch.save(equilibrium_states, last_eqstate_path)
+        _save_equilibrium_states_without_runtime_data(
+            equilibrium_states,
+            best_eqstate_path,
+        )
+        _save_equilibrium_states_without_runtime_data(
+            equilibrium_states,
+            last_eqstate_path,
+        )
         state.save(opt_state_path)
         console.print(
             f"saved initial checkpoint to {checkpoint_path} "
@@ -629,13 +656,19 @@ def optimize_thermodynamic_parameters(
                 state.best_loss = epoch_loss
                 state.update_from_runtime(optimizer, scheduler)
                 torch.save(system, best_model_path)
-                torch.save(equilibrium_states, best_eqstate_path)
+                _save_equilibrium_states_without_runtime_data(
+                    equilibrium_states,
+                    best_eqstate_path,
+                )
                 state.save(opt_state_path)
 
             if checkpoint_path is not None:
                 state.update_from_runtime(optimizer, scheduler)
                 torch.save(system, last_model_path)
-                torch.save(equilibrium_states, last_eqstate_path)
+                _save_equilibrium_states_without_runtime_data(
+                    equilibrium_states,
+                    last_eqstate_path,
+                )
                 state.save(opt_state_path)
 
         if should_stop:
@@ -657,7 +690,10 @@ def optimize_thermodynamic_parameters(
     if checkpoint_path is not None:
         state.update_from_runtime(optimizer, scheduler)
         torch.save(system, last_model_path)
-        torch.save(equilibrium_states, last_eqstate_path)
+        _save_equilibrium_states_without_runtime_data(
+            equilibrium_states,
+            last_eqstate_path,
+        )
         state.save(opt_state_path)
         console.print(f"saved latest model to {last_model_path}")
         console.print(f"saved latest equilibrium states to {last_eqstate_path}")
@@ -667,7 +703,10 @@ def optimize_thermodynamic_parameters(
         state.best_loss = final_loss
         state.update_from_runtime(optimizer, scheduler)
         torch.save(system, best_model_path)
-        torch.save(equilibrium_states, best_eqstate_path)
+        _save_equilibrium_states_without_runtime_data(
+            equilibrium_states,
+            best_eqstate_path,
+        )
         state.save(opt_state_path)
         console.print(
             f"saved best model to {best_model_path} "

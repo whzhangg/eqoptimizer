@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 from collections.abc import Mapping, Sequence, Set
 import dataclasses
+from typing import Any
 
 from .models.system_abc import ThermodynamicSystem
 from .dtype import DEFAULT_DEVICE, DEFAULT_TYPE
@@ -92,6 +93,16 @@ class PhaseEquilibriumOptState(torch.nn.Module):
             torch.nn.init.zeros_(self.mu)
         else:
             self.register_parameter("mu", None)
+        self.runtime_data: dict[PhaseID, Any] | None = None # initialized on first evaluation
+
+
+    def get_runtime_data(self) -> dict:
+        if self.runtime_data is None:
+            self.runtime_data = {}
+        return self.runtime_data
+
+    def clear_runtime_data(self) -> None:
+        self.runtime_data = None
 
 
     def _select_mu_strategy(self, mu_strategy: str) -> str:
@@ -173,6 +184,7 @@ class PhaseEquilibriumOptState(torch.nn.Module):
                     phase,
                     composition,
                     self.equilibrium.temperature,
+                    self.get_runtime_data(),
                 ).reshape(())
             )
         return torch.stack(values)
@@ -363,6 +375,7 @@ def phase_equilibrium_loss_parts(
             phase,
             mu_dict,
             temperature,
+            state.get_runtime_data(),
         )
         for phase in phases_to_evaluate
     }

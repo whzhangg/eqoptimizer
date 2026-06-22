@@ -20,12 +20,24 @@ from .cef_terms import (
     get_cef_context_and_terms_from_tdb_string,
 )
 
+
+@dataclasses.dataclass
+class CEFCache:
+    gibbs_base_y: torch.Tensor | None = None
+    gibbs_live_y: torch.Tensor | None = None
+    grand_potential_base_y: torch.Tensor | None = None
+    grand_potential_live_y: torch.Tensor | None = None
+
+
+
+
 @dataclasses.dataclass(frozen=True)
 class CEFConfig:
     """Default external-facing numerical options for CEF evaluations."""
 
     # shared sampling/min-pooling options
     n_samples: int = 64
+    n_samples_cached: int = 4
     use_softmin: bool = True
     softmin_tau: float | None = None
     eps: float = 1.0e-8
@@ -38,13 +50,14 @@ class CEFConfig:
     # fixed-composition Gibbs-energy options
     gibbs_energy_steps: int = 6
     gibbs_energy_delta: float = 0.3
+    gibbs_energy_max_logit_step: float | None = 5.0
 
     # constrained-EGD dual solve options
     newton_steps: int = 20
     newton_damping: float = 1.0e-10
     max_dual_step: float = 2.0
     constraint_tol: float = 1.0e-8
-    dual_backtracking_steps: int = 8
+    dual_backtracking_steps: int = 10
     primal_backtracking_steps: int = 6
     composition_penalty_weight: float | None = None
 
@@ -196,7 +209,11 @@ class CEF(ThermodynamicModel):
         return '\n'.join(lines).upper()
 
 
-    def gibbs_energy_per_molar_atom(self, comp, temperature):
+    def create_runtime_data(self) -> CEFCache:
+        return CEFCache()
+
+
+    def gibbs_energy_per_molar_atom(self, comp, temperature, runtime_data: CEFCache = None):
         temperature = scalar_temperature(temperature)
         target_x = normalize_and_order_composition(comp, self.elements)
 
@@ -222,22 +239,25 @@ class CEF(ThermodynamicModel):
                 temperature,
                 normalize_by_amount=True
             )
-        return self._gibbs_energy_by_constrained_EGD(comp, temperature)
+        return self._gibbs_energy_by_constrained_EGD(comp, temperature, cache=runtime_data)
 
 
     def grand_potential_per_molar_atom(self,
         mu: Mapping[str, float],
         temperature: float,
+        runtime_data: CEFCache = None,
     ):
         return self._grand_potential_by_EGD(
             mu=mu,
             temperature=temperature,
+            cache=runtime_data,
             n_samples_each_side=self.config.n_samples,
             n_steps=self.config.grand_potential_steps,
             use_softmin=self.config.use_softmin,
             delta=self.config.grand_potential_delta,
             tau=self.config.softmin_tau,
             max_step_factor=self.config.max_step_factor,
+            n_live_y=self.config.n_samples_cached,
             eps=self.config.eps
         )
 
@@ -399,12 +419,14 @@ class CEF(ThermodynamicModel):
     def _grand_potential_by_EGD(self,
         mu: Mapping[str, float],
         temperature: float,
+        cache: CEFCache | None,
         n_samples_each_side: int,
         n_steps: int,
         use_softmin: bool,
         delta: float,
         tau: float | None,
         max_step_factor: int,
+        n_live_y: int,
         eps: float
     ) -> torch.Tensor:
         """solve grand potential
@@ -420,10 +442,21 @@ class CEF(ThermodynamicModel):
         temperature = scalar_temperature(temperature)
         mu = get_tensor_mu(mu, self.elements)
 
-        sampled_y = multi_simplex_samples_dirichlet(
-            self.ncomp_for_each_sublattice,
-            n_samples_each_side,
-        )
+        if cache is not None and cache.grand_potential_base_y is not None:
+            base_y = cache.grand_potential_base_y
+        else:
+            base_y = multi_simplex_samples_dirichlet(
+                self.ncomp_for_each_sublattice,
+                n_samples_each_side,
+            ).to(device=self.multi_for_each_y.device, dtype=self.multi_for_each_y.dtype)
+            if cache is not None:
+                cache.grand_potential_base_y = base_y.detach()
+
+        if cache is not None and cache.grand_potential_live_y is not None:
+            sampled_y = torch.cat([base_y, cache.grand_potential_live_y], dim=0)
+        else:
+            sampled_y = base_y
+
         if tau is None:
             if sampled_y.shape[0] == 1:
                 tau = 1.0
@@ -436,6 +469,10 @@ class CEF(ThermodynamicModel):
                 mu,
                 temperature,
             )
+            if cache is not None and int(n_live_y) > 0:
+                k = min(int(n_live_y), sampled_y.shape[0])
+                indices = torch.topk(values.detach(), k=k, largest=False).indices
+                cache.grand_potential_live_y = sampled_y.detach()[indices]
             if use_softmin:
                 return -tau * torch.logsumexp(-values / tau, dim=0)
             return torch.min(values)
@@ -447,7 +484,6 @@ class CEF(ThermodynamicModel):
         ]
 
         with torch.enable_grad():
-            total_rej = 0
             for _ in range(int(n_steps)):
                 y = y.detach().requires_grad_(True)
                 values = self._grand_potential_from_internal_dof(
@@ -498,7 +534,6 @@ class CEF(ThermodynamicModel):
                         eta = torch.where(too_large, eta * shrink, eta)
                         proposed = self._exp_gradient_update(w, centered_g, eta)
                         eta_by_sublattice[sublattice] = eta
-                        total_rej += 1
 
                     updated_parts.append(proposed.detach())
                     column_start = column_stop
@@ -510,6 +545,11 @@ class CEF(ThermodynamicModel):
             mu,
             temperature,
         )
+        if cache is not None and int(n_live_y) > 0:
+            k = min(int(n_live_y), y.shape[0])
+            indices = torch.topk(values.detach(), k=k, largest=False).indices
+            cache.grand_potential_live_y = y.detach()[indices]
+
         if use_softmin:
             return -tau * torch.logsumexp(-values / tau, dim=0)
         else:
@@ -520,6 +560,7 @@ class CEF(ThermodynamicModel):
         composition: Mapping[str, float],
         temperature: float,
         *,
+        cache: CEFCache | None = None,
         sampled_y: torch.Tensor | None = None,
         return_internal_dof: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
@@ -534,10 +575,19 @@ class CEF(ThermodynamicModel):
         tau = self.config.softmin_tau
         use_softmin = self.config.use_softmin
         if sampled_y is None:
-            sampled_initial = self.sample_internal_dof_at_composition(
-                composition,
-                n_samples,
-            )
+            if cache is not None and cache.gibbs_base_y is not None:
+                base_y = cache.gibbs_base_y
+            else:
+                base_y = self.sample_internal_dof_at_composition(
+                    composition,
+                    n_samples,
+                )
+                if cache is not None:
+                    cache.gibbs_base_y = base_y.detach()
+            if cache is not None and cache.gibbs_live_y is not None:
+                sampled_initial = torch.cat([base_y, cache.gibbs_live_y], dim=0)
+            else:
+                sampled_initial = base_y
         else:
             sampled_initial = torch.as_tensor(
                 sampled_y,
@@ -551,6 +601,7 @@ class CEF(ThermodynamicModel):
             temperature,
             n_steps=self.config.gibbs_energy_steps,
             delta=self.config.gibbs_energy_delta,
+            max_logit_step=self.config.gibbs_energy_max_logit_step,
             n_newton_steps=self.config.newton_steps,
             newton_damping=self.config.newton_damping,
             max_dual_step=self.config.max_dual_step,
@@ -566,6 +617,15 @@ class CEF(ThermodynamicModel):
             temperature,
             normalize_by_amount=True
         )
+        if (
+            sampled_y is None
+            and cache is not None
+            and int(self.config.n_samples_cached) > 0
+        ):
+            k = min(int(self.config.n_samples_cached), optimized_y.shape[0])
+            indices = torch.topk(values.detach(), k=k, largest=False).indices
+            cache.gibbs_live_y = optimized_y.detach()[indices]
+
         if use_softmin:
             if tau is None:
                 if values.numel() == 1:
@@ -589,6 +649,7 @@ class CEF(ThermodynamicModel):
         *,
         n_steps: int = 6,
         delta: float = 0.3,
+        max_logit_step: float | None = 10.0,
         n_newton_steps: int = 20,
         newton_damping: float = 1.0e-10,
         max_dual_step: float = 2.0,
@@ -633,7 +694,7 @@ class CEF(ThermodynamicModel):
         if int(n_steps) <= 0:
             return y.squeeze(0) if squeeze_output else y
         if composition_penalty_weight is None:
-            composition_penalty = 10.0 * torch.abs(R * temperature).clamp_min(1.0)
+            composition_penalty = 100.0 * torch.abs(R * temperature).clamp_min(1.0)
         else:
             composition_penalty = torch.as_tensor(
                 composition_penalty_weight,
@@ -671,6 +732,15 @@ class CEF(ThermodynamicModel):
                 dtype=y.dtype,
             )
             constraint_rhs = torch.empty(0, device=y.device, dtype=y.dtype)
+        sublattice_slices = []
+        constraint_blocks = []
+        column_start = 0
+        for n_components in self.ncomp_for_each_sublattice:
+            column_stop = column_start + n_components
+            sublattice_slice = slice(column_start, column_stop)
+            sublattice_slices.append(sublattice_slice)
+            constraint_blocks.append(constraint_matrix[:, sublattice_slice])
+            column_start = column_stop
 
         optimized_y = y.detach()
         dual_mu = None
@@ -716,6 +786,19 @@ class CEF(ThermodynamicModel):
                     column_start = column_stop
 
                 eta = delta / scale.clamp_min(eps)
+                if max_logit_step is not None:
+                    max_abs_logit_step = (eta * grad_y.detach()).abs().amax(
+                        dim=-1,
+                        keepdim=True,
+                    )
+                    eta = eta * torch.clamp(
+                        torch.as_tensor(
+                            max_logit_step,
+                            device=eta.device,
+                            dtype=eta.dtype,
+                        ) / max_abs_logit_step.clamp_min(eps),
+                        max=1.0,
+                    )
                 previous_y = optimized_y.detach()
                 previous_mu = None if dual_mu is None else dual_mu.detach()
                 updated_y = previous_y
@@ -732,7 +815,8 @@ class CEF(ThermodynamicModel):
                         grad_y.detach(),
                         eta_try,
                         previous_mu,
-                        self.ncomp_for_each_sublattice,
+                        sublattice_slices,
+                        constraint_blocks,
                         constraint_matrix,
                         constraint_rhs,
                         n_newton_steps=n_newton_steps,
@@ -797,12 +881,24 @@ class CEF(ThermodynamicModel):
 
 
     @staticmethod
+    def _normalize_sublattice_logits_from_slices(
+        logits: torch.Tensor,
+        sublattice_slices: Sequence[slice],
+    ) -> torch.Tensor:
+        return torch.cat(
+            [torch.softmax(logits[..., sublattice_slice], dim=-1)
+             for sublattice_slice in sublattice_slices],
+            dim=-1,
+        )
+
+    @staticmethod
     def _constrained_egd_update(
         current_y: torch.Tensor,
         grad_y: torch.Tensor,
         eta: torch.Tensor,
         initial_mu: torch.Tensor | None,
-        ncomp_for_each_sublattice: Sequence[int],
+        sublattice_slices: Sequence[slice],
+        constraint_blocks: Sequence[torch.Tensor],
         constraint_matrix: torch.Tensor,
         constraint_rhs: torch.Tensor,
         *,
@@ -822,9 +918,9 @@ class CEF(ThermodynamicModel):
                 dtype=current_y.dtype,
             )
             return (
-                CEF._normalize_sublattice_logits(
+                CEF._normalize_sublattice_logits_from_slices(
                     base_logits,
-                    ncomp_for_each_sublattice,
+                    sublattice_slices,
                 ),
                 None,
                 residual_norm,
@@ -850,7 +946,7 @@ class CEF(ThermodynamicModel):
             y_mu, residual = CEF._y_and_constraint_residual_from_dual_mu(
                 base_logits,
                 mu,
-                ncomp_for_each_sublattice,
+                sublattice_slices,
                 constraint_matrix,
                 constraint_rhs,
             )
@@ -864,8 +960,8 @@ class CEF(ThermodynamicModel):
 
             jacobian = CEF._constraint_residual_jacobian(
                 y_mu,
-                ncomp_for_each_sublattice,
-                constraint_matrix,
+                sublattice_slices,
+                constraint_blocks,
             )
             linear_system = jacobian - newton_damping * eye
             rhs = -residual.unsqueeze(-1)
@@ -893,7 +989,7 @@ class CEF(ThermodynamicModel):
                 trial_y, trial_residual = CEF._y_and_constraint_residual_from_dual_mu(
                     base_logits,
                     trial_mu,
-                    ncomp_for_each_sublattice,
+                    sublattice_slices,
                     constraint_matrix,
                     constraint_rhs,
                 )
@@ -934,14 +1030,14 @@ class CEF(ThermodynamicModel):
     def _y_and_constraint_residual_from_dual_mu(
         base_logits: torch.Tensor,
         dual_mu: torch.Tensor,
-        ncomp_for_each_sublattice: Sequence[int],
+        sublattice_slices: Sequence[slice],
         constraint_matrix: torch.Tensor,
         constraint_rhs: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         logits = base_logits - dual_mu @ constraint_matrix
-        candidate_y = CEF._normalize_sublattice_logits(
+        candidate_y = CEF._normalize_sublattice_logits_from_slices(
             logits,
-            ncomp_for_each_sublattice,
+            sublattice_slices,
         )
         candidate_residual = candidate_y @ constraint_matrix.mT - constraint_rhs
         return candidate_y, candidate_residual
@@ -950,21 +1046,22 @@ class CEF(ThermodynamicModel):
     @staticmethod
     def _constraint_residual_jacobian(
         y: torch.Tensor,
-        ncomp_for_each_sublattice: Sequence[int],
-        constraint_matrix: torch.Tensor,
+        sublattice_slices: Sequence[slice],
+        constraint_blocks: Sequence[torch.Tensor],
     ) -> torch.Tensor:
         batch = y.shape[0]
-        n_constraints = constraint_matrix.shape[0]
+        n_constraints = constraint_blocks[0].shape[0]
         jacobian = torch.zeros(
             (batch, n_constraints, n_constraints),
             device=y.device,
             dtype=y.dtype,
         )
-        column_start = 0
-        for n_components in ncomp_for_each_sublattice:
-            column_stop = column_start + n_components
-            w = y[..., column_start:column_stop]
-            local_a = constraint_matrix[:, column_start:column_stop]
+        for sublattice_slice, local_a in zip(
+            sublattice_slices,
+            constraint_blocks,
+            strict=True,
+        ):
+            w = y[..., sublattice_slice]
             mean_a = w @ local_a.mT
             second_moment = torch.einsum(
                 "bi,ai,ci->bac",
@@ -976,7 +1073,6 @@ class CEF(ThermodynamicModel):
                 mean_a[:, :, None] * mean_a[:, None, :]
                 - second_moment
             )
-            column_start = column_stop
         return jacobian
 
 
