@@ -32,7 +32,7 @@ if __name__ == "__main__":
     all_phases = {}
     for phid in phase_ids:
         all_phases[phid] = CEF.from_tdb_and_phasename(
-            TO_OPT, phid.name, correction_order=1
+            TO_OPT, phid.name, correction_order=1, temperature_ref=600
         )
     system = EnsembleSystem(all_phases)
 
@@ -41,7 +41,12 @@ if __name__ == "__main__":
 
     # step 3. define configuration
     config = OptimizationConfig(
+        epochs=1000,
         lr=100, 
+        cosine_decay=False,
+        scale_energy_by_rt=False,
+        use_huber_for_stable_phases=True, 
+        regularization_weight=1e-12
     )
 
     # step 4. optimize

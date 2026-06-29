@@ -18,6 +18,28 @@ class ThermodynamicSystem(nn.Module, ABC):
         ele_set = set(elements)
         return [phase for phase in self.phase_ids if set(phase.elements) <= ele_set]
 
+
+    @abstractmethod
+    def project_composition_for_phase(
+        self,
+        phase_id: PhaseID,
+        comp: Mapping[str, float],
+        *,
+        tol: float = 1.0e-3,
+    ) -> Mapping[str, float]:
+        """Return a valid composition for a phase, correcting small input errors."""
+
+
+    def project_composition(
+        self,
+        phase_id: PhaseID,
+        comp: Mapping[str, float],
+        *,
+        tol: float = 1.0e-3,
+    ) -> Mapping[str, float]:
+        """return a valid composition if it is within tolerance from feasible ones"""
+        return self.project_composition_for_phase(phase_id, comp, tol=tol)
+
     
     def forward(
         self,

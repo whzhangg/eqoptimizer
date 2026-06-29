@@ -1,132 +1,139 @@
+# Introduction
+
+Phase diagrams are of foundamental importance in materials development, design and optimization. However, as more and more research focus has been placed in multicomponent systems for both functional and structural applications, revelant phases diagrams become less available. 
+
+If some experimental observation are available, CALculation of PHAse Diagram (CALPHAD) assessment can be used to efficiently interpolate between experimental data to determine phase boundaries and predict phase diagrams. In the CALPHAD approach, phenomenological free energy models are parameterized as a function of temperature, pressure and site-fractions. The parameters are determined directly or indirectly by optimization with respect to experimental thermodynamic quantitatives such as heat capacity or observed compositions at phase equilibria. Since smooth polynomials are often used in the thermodynamic models, some interpolation into unknown regions of the phase diagram is made possible.
+
+Without experimental data, phase diagrams can be predicted from first-principle. In a typical approach, free energy of a phase can be modelled using energy and its derivatives from density functional theory (DFT) calculations. Harmonic or quasi-harmonic phonon calculations account for vibrational entropy. Configurational entropy can be approximated by in Bragg-Williams approximation or more accurately based on cluster expansion models. While these methods are readily available, high computational cost of density functional theory (DFT) evaluation hinders their applications to many practical problems. Recently advancement in universal machine learning interatomic potentials (UMLIPs) promises to significantly accelerate the prediction of phase diagram by providing a surrogate energy models that are a few magnitude faster to evaluate. The state-of-the-art UMLIPs achieve near DFT accuracy and thus can be used instead of DFT for free energy calculations. Indeed, recent works have shown its success in different cases. 
+
+However, practical usage of phase diagram depends crucially on the accuracy in describing phase boundaries and phase transitions temperatures. As UMLIPs are typically trained on DFT data calculated at PBE level, machine learning error ($\approx 1\,\mathrm{kJ/mol}$) will be compounded with DFT error ($\approx 1\,\mathrm{kJ/mol}$). As a result, UMLIP predicted phase diagrams often quantitatively deviate from experimental results and cannot be easily amended by further increasing training DFT data size. As a result, unreliable UMLIP phase diagrams may not be attractive to guide experimental effort. 
+
+It is thus clear that DFT or UMLIP predictions of phase diagrams can only be a first approximations to the true phase diagrams determined from experiments. To improve the accuracy of the resulting phase diagrams, further optimization is necessary. A common approach is to combine DFT assessment of free energy with CALPHAD assessment, in which a set of thermodynamic parameters is first derived by fitting with respect to the calculated free energy, and then subsequently optimized by fitting to experimental observations. The same approach can be applied readily without modification to free energy from UMLIPs. However, since UMLIPs can be considered to be thermodynamic models themselves, there is no theoretical obstacles to optimize UMLIP model parameters directly from experimental data especially phase equilibria data.
+
+Practical optimization however, is not straightforward. Typical approach such numerical gradient or blackbox optimization as used in many CALPHAD optimizations can not be reliably used for machine learning model optimization. Recently, analytic gradient based optimization have been developed and implemented by Kunselman et al. However, their formulation is rigid and cannot be extended beyond the CALPHAD framework. Auto-differentiation maybe the most promising route to enable gradient optimization of any thermodynamic models regardless of complexity. In this work, we implemented an auto-differentitation based optimization for optimizing thermodynamic models based on experimental phase equilibria. To use auto-differentiation, a loss function have to be defined and expressed as a differentiable computation graph that are efficient to compute. In this work, we derive a formula of the loss function rigorously from equilibrium condition. Using this loss function and CALPHAD model as example, we show that our implementation allows accurate reproduction of experimental phase equilibrium. The optimization workflow is implemented in pytorch and can thus support any thermodynamic model with different complexity. 
+
+This article is organized as follows: first, we will derived a differentiable loss function from the equilibrium condition. Then, we outline the techniques that enable the calculation of the loss function. Finally, we will show examples of the optimization. A review of related work on CALPHAD optimization is supplied in Supplementary Material.
+
 # Methodology
 
-## Equilibrium condition
+## 1. Equilibrium condition
 
-In this project, we consider thermodynamic *models* for a phase $\alpha$ with which energy can be calculated from input variables $T$, $P$ and internal coordinate $\mathbf{y}^{\alpha}$. The model is parameterized by $\mathbb{W}^{\alpha}$:
+In this work, we use $\alpha$, $\beta$ to indicate a phase. A thermodynamic model $G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha})$ for a phase $\alpha$ is a function with which energy can be calculated from input variables $T$, $P$ and a set of internal coordinate $\mathbf{y}^{\alpha}$, which may be required to satisfy a set of constraints $C_k^{\alpha}(\mathbf{y}^{\alpha}) = 0$. The parameters of the model is denoted as $\mathbb{W}^{\alpha}$.
+The subscript $M$ in $G_M$ indicate that this value $G_M$ is defined for one molar of the cell, in which vacancy could occupy some sites. The amount of chemical species $(A,B,\cdots)$ in one molar of the same cell is given as functions of internal coordinates:
 $$
-G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha})
+N_{A}^{\alpha} = N_{A}^{\alpha}(\mathbf{y}^{\alpha});\quad
+N_{B}^{\alpha} = N_{B}^{\alpha}(\mathbf{y}^{\alpha});\quad\cdots
 $$
-The internal coordinates of the phase $\alpha$ may be required to satisfy a series of constraints: 
-$$
-C_1^{\alpha}(\mathbf{y}^{\alpha}) = 0,\quad C_2^{\alpha}(\mathbf{y}^{\alpha}) = 0,\quad \cdots
-$$
-The subscript $M$ in $G_M$ indicate that this value $G_M$ is defined for one molar of the cell, in which vacancy could occupy some sites. The amount of chemical species in one molar of the same cell is given as functions of internal coordinates:
-$$
-M_{A}^{\alpha} = M_{A}^{\alpha}(\mathbf{y}^{\alpha});\quad
-M_{B}^{\alpha} = M_{B}^{\alpha}(\mathbf{y}^{\alpha});\quad\cdots
-$$
-The total amount of chemical species is: $M^{\alpha} = \sum_{i\neq \mathrm{Vac}} M_i^{\alpha}$ and from this, we can calculate thermodynamic properties per atom:
-$$
-G_m^{\alpha} = \frac{G_M^{\alpha}}{M^{\alpha}}
-$$
+The total amount of chemical species is: $N^{\alpha} = \sum_{i\neq \mathrm{Vac}} N_i^{\alpha}$ and from this, we can calculate thermodynamic properties per atom: $G_m^{\alpha} = G_M^{\alpha}/ M^{\alpha}$.
 
 We use black-bold to denote independent control variables. We consider a set of phases $\alpha, \beta, \gamma, \delta\cdots$ with phase fraction $\mathcal{N}^{\alpha}, \mathcal{N}^{\beta}\cdots$.
-The global equilibrium at given temperature $\mathbb{T}$, pressure $\mathbb{P}$ and total number of atoms for each element $A$: $\mathbb{N}_A$ can be obtained by minimizing thermodynamic model with respect to the constraints:
+The global equilibrium at given temperature $\mathbb{T}$, pressure $\mathbb{P}$ and total number of atoms $\mathbb{N}_i$ for each element $i$ can be obtained by minimizing thermodynamic model with respect to the constraints:
 $$
-\mathbf{G}(\mathbb{N}, \mathbb{T}, \mathbb{P}) = \min_{(\mathcal{N}\ge 0,\mathbf{y},T,P)} \left[\sum_{\alpha} \mathcal{N}^{\alpha} G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha})\right] \quad\text{subject to}
+\begin{align*}
+\mathbf{G}(\mathbb{N}, \mathbb{T}, \mathbb{P}) &= \min_{(\mathcal{N}\ge 0,\mathbf{y},T,P)} \left[\sum_{\alpha} \mathcal{N}^{\alpha} G_M^{\alpha}(\mathbf{y}^{\alpha}, T, P,\mathbb{W}^{\alpha})\right] \\ &\text{subject to}
 \begin{cases}
 T = \mathbb{T}\\
 P = \mathbb{P}\\
-\sum_{\alpha}\mathcal{N}^{\alpha} M_{A}^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{N}_A, \cdots\\
+\sum_{\alpha}\mathcal{N}^{\alpha} N_{A}^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{N}_A, \cdots\\
 C_1^{\alpha}(\mathbf{y}^{\alpha}) = 0, \cdots
 \end{cases}
+\end{align*}
 $$
-It is important to note that we also have inequality constraint $\mathcal{N}\ge 0$. The minimization problem can be solved by found by finding the stationary point of the Largrangian:
+It is important to note that we also have inequality constraint $\mathcal{N}\ge 0$, so that for a phase $\gamma$ that is not represent, $\mathcal{N}^{\gamma}=0$. The minimization problem can be solved by found by finding the stationary point of the Largrangian:
 $$
 \begin{align*}
 L &=\sum_{\alpha} \mathcal{N}^{\alpha} G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})
-+ \sum_A \mu_A \left[ \mathbb{N}_A-\sum_{\alpha}\mathcal{N}^{\alpha} M_{A}^{\alpha}(\mathbf{y}^{\alpha}) \right] + \sum_{\alpha} \sum_k \zeta_k^{\alpha} C_k^{\alpha}(\mathbf{y}^{\alpha}) \\
++ \sum_A \mu_A \left[ \mathbb{N}_A-\sum_{\alpha}\mathcal{N}^{\alpha} N_{A}^{\alpha}(\mathbf{y}^{\alpha}) \right] + \sum_{\alpha} \sum_k \zeta_k^{\alpha} C_k^{\alpha}(\mathbf{y}^{\alpha}) \\
 & = \sum_{\alpha} \mathcal{N}^{\alpha} \Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})
 + \sum_A \mu_A \mathbb{N}_A + \sum_{\alpha} \sum_k \zeta_k^{\alpha} C_k^{\alpha}(\mathbf{y}^{\alpha})
 \end{align*}
 $$
-where $T=\mathbb{T}$ and $P=\mathbb{P}$ is solved trivally and is inserted into the Lagrangian. $\boldsymbol{\mu}$ and $\boldsymbol{\zeta}$ are lagrange multiplier for the mass balance constraints and constraints on $\mathbf{y}$. Furthermore, $\boldsymbol{\mu}$ can be shown to be the chemical potential. We have defined a quantity $\Phi$:
+where $T=\mathbb{T}$ and $P=\mathbb{P}$ is solved trivally and can be inserted into the Lagrangian. They are dropped in the following. $\boldsymbol{\mu}$ and $\boldsymbol{\zeta}$ are lagrange multiplier for the mass balance constraints and constraints on $\mathbf{y}$. $\boldsymbol{\mu}$ can be shown to be the chemical potential. We have defined a quantity $\Phi$, which has the form of a grand potential:
 $$
-\Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})
-= G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mu_A M_{A}^{\alpha}(\mathbf{y}^{\alpha})
+\Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{W}^{\alpha})
+= G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{W}^{\alpha}) - \sum_A \mu_A N_{A}^{\alpha}(\mathbf{y}^{\alpha})
 $$
-The stationary point is given by:
+The stationary point is given by the following set of equations:
 $$
 \begin{gather}
-\frac{\partial L}{\partial \mathcal{N}^{\alpha}} = \Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) \begin{cases}=0\quad \text{if $\mathcal{N}^{\alpha}>0$}\\
+\frac{\partial L}{\partial \mathcal{N}^{\alpha}} = \Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{W}^{\alpha}) \begin{cases}=0\quad \text{if $\mathcal{N}^{\alpha}>0$}\\
 > 0 \quad \text{if $\mathcal{N}^{\alpha}=0$} \end{cases} \\
 \frac{\partial L}{\partial y_i^{\alpha}} = \mathcal{N}^{\alpha} \frac{\partial \Phi_M^{\alpha}}{\partial y_i^{\alpha}} + \sum_k \zeta_k \frac{C_k^{\alpha}(\mathbf{y}^{\alpha})}{\partial y_i} = 0 \\
-\frac{\partial L}{\partial \mu_A}=\sum_{\alpha}\mathcal{N}^{\alpha} M_{A}^{\alpha}(\mathbf{y}^{\alpha}) - \mathbb{N}_A = 0\quad\quad 
+\frac{\partial L}{\partial \mu_A}=\sum_{\alpha}\mathcal{N}^{\alpha} N_{A}^{\alpha}(\mathbf{y}^{\alpha}) - \mathbb{N}_A = 0 \\
 \frac{\partial L}{\partial \zeta_k^{\alpha}}=C_k^{\alpha}(\mathbf{y}^{\alpha}) = 0
 \end{gather}
 $$
-where we note that for stable phase with $\mathcal{N}>0$, we require $\Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})=0$, but for unstable phase, this condition does not need to be satisfied. However, since the internal coordinates for phases with $\mathcal{N}=0$ cannot be uniquely determined, the condition for a phase $\gamma$ to be unstable is that:
+where the above four equations are defined for each phase, each internal coordinates, each chemical species and each constraints, respectively.
+We note that for stable phase with $\mathcal{N}^{\alpha}>0$, we require $\Phi_M^{\alpha}(\mathbf{y}^{\alpha}, \boldsymbol{\mu}, \mathbb{W}^{\alpha})=0$, but for unstable phase $\gamma$, this condition does not need to be satisfied and thus the internal coordinates for phases with $\mathcal{N}=0$ cannot be uniquely determined. Nonetheless, with determined chemical potential $\boldsymbol{\mu}$, the condition for a phase $\gamma$ to be unstable is that:
 $$
-\boxed{
-\min_{\mathbf{y}^{\gamma}} \Phi_M^{\gamma}(\mathbf{y}^{\gamma},\mu,\mathbb{T}, \mathbb{P},\mathbb{W}^{\gamma}) > 0 \quad\quad \text{subject to constraints}
-}
+\min_{\mathbf{y}^{\gamma},C_k^{\gamma}} \Phi_M^{\gamma}(\mathbf{y}^{\gamma},\mu,\mathbb{W}^{\gamma}) > 0
 $$
-On the other hand, for a stable phase $\alpha$, if we determine the following quantity at the determined chemical potential $\mu$:
-$$
-\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\mu,\mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) \quad\quad \text{subject to constraints}
-$$
-we find the solution is given the stationary point:
+where $C_k^{\gamma}$ means that constraints on $\mathbf{y}^{\gamma}$ need to be satisfied.
+On the other hand, for a stable phase $\alpha$, if we determine the following quantity with $\boldsymbol{\mu}$, we find solving the minimization problem $\min_{\mathbf{y}^{\alpha},C_k^{\alpha}(\mathbf{y}^{\alpha}) = 0} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\mu,\mathbb{W}^{\alpha})$
+lead to the following set the equations which is identical to equation condition:
 $$
 \frac{\partial \Phi_M^{\alpha}}{\partial y_i^{\alpha}} + \sum_k \zeta_k \frac{\partial C_k^{\alpha} (\mathbf{y}^{\alpha})}{\partial y_i^{\alpha}} = 0 \quad\text{and}\quad C_k^{\alpha} (\mathbf{y}^{\alpha})=0
 $$
-which is just equation (2) in the equilibrium condition with a factor. So we see that the internal coordinate $\mathbf{y}^{\alpha}$ solved from the the global phase equilibrium also minimizes $\Phi_M^{\alpha}$. Therefore, we can combine the equilibrium conditions (1) and (2) to give the equilibrium condition for a stable phase:
+So we see that the internal coordinate $\mathbf{y}^{\alpha}$ solved from the the global phase equilibrium also minimizes $\Phi_M^{\alpha}$. Therefore, we can combine the equilibrium conditions (1) and (2) to give the equilibrium condition for a stable phase:
 $$
-\boxed{
-\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\mu,\mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})=0 \quad\quad \text{subject to constraints}
-}
+\min_{\mathbf{y}^{\alpha},C_k^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\mu,\mathbb{W}^{\alpha})=0
 $$
-The two boxed equation are equivalent condition to equilibrium condition (1) and (2). Together with the mass balance constraints, they allow us to determine the internal coordinate $\mathbf{y}$ and $\boldsymbol{\mu}$. 
+The two equations of $\Phi$ are equivalent condition to equilibrium condition (1) and (2), that also allow the determination of internal coordinate $\mathbf{y}$ and $\boldsymbol{\mu}$ when solved together with the mass balance constraints. 
 
-## Loss Functions
+## 2. Loss Functions
 
 ### Definition
 
 Typically, experimental phase equilibrium data are given by the measured compositions of phases in equililibrum: 
 $$
-(\mathbb{M}_A^{\alpha},\mathbb{M}_b^{\alpha},\cdots),
-(\mathbb{M}_A^{\beta},\mathbb{M}_b^{\beta},\cdots),
+(\mathbb{N}_A^{\alpha},\mathbb{N}_b^{\alpha},\cdots),
+(\mathbb{N}_A^{\beta},\mathbb{N}_b^{\beta},\cdots),
 \cdots
 $$ 
-If the experimental equilibrium is indeed reproduced by the thermodynamic model, then, the internal coordinates that satisfy the equilibrium conditions should also satisfy:
+If an experimental equilibrium is indeed reproduced by the thermodynamic model, then, the internal coordinates that satisfy the equilibrium conditions should also satisfy:
 $$
-M_A^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{M}_A^{\alpha} \cdots
+N_A^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{N}_A^{\alpha} \cdots
 $$
-On the other hand, deviation from equilibrium can be measured also using the equilibrium condition, but at constrained composition of each observed phase. Since the chemical potential is also unknown, we set auxiliary chemical potential vectors $\boldsymbol{\mu}'$ for this phase equilibrium. For the set of chemical potential, we find deviation to the observed phase equilibrium:
+Reversely, deviation from equilibrium can also be measured using the equilibrium condition, but at constrained composition of each observed phase. Since the chemical potential is also unknown, we set auxiliary chemical potential vectors $\boldsymbol{\mu}'$ for this phase equilibrium and we find deviation to the observed phase equilibrium:
 $$
-\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha})\neq0 \quad\quad \text{subject to $C_k^{\alpha}$}
+\min_{\mathbf{y}^{\alpha},C_k^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{W}^{\alpha})\neq0
 $$
-Furthermore, solving $\mathbf{y}$ in above term should reproduce the observed equilibrium composition. If the above term is computed at the constrained composition $M_A^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{M}_A^{\alpha}$ and so on, we find that locally:
+Furthermore, solving $\mathbf{y}$ in above term may not reproduce the observed equilibrium composition. If the above term is computed at the constrained composition $N_A^{\alpha}(\mathbf{y}^{\alpha}) = \mathbb{N}_A^{\alpha}$ and so on, we find that locally:
 $$
-\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) = 
-\min_{\mathbf{y}^{\alpha}} G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{M}_{A}^{\alpha}
-= \mathbf{G}_M^{\alpha}(\mathbb{M}^{\alpha}, \mathbb{T}, \mathbb{P},\mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{M}_{A}^{\alpha}
+\begin{align*}
+\min_{\mathbf{y}^{\alpha},C_k^{\alpha},\mathbb{N}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{W}^{\alpha}) &= 
+\min_{\mathbf{y}^{\alpha},C_k^{\alpha},\mathbb{N}^{\alpha}} G_M^{\alpha}(\mathbf{y}^{\alpha}, \mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{N}_{A}^{\alpha}
+\\ &= \mathbf{G}_M^{\alpha}(\mathbb{N}^{\alpha}, \mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{N}_{A}^{\alpha}
+\end{align*}
 $$
 where the first term is composition constrained Gibbs energy. For unobserved phase $\gamma$, we still require that:
 $$
-\min_{\mathbf{y}^{\gamma}} \Phi_M^{\gamma}(\mathbf{y}^{\gamma},\boldsymbol{\mu}',\mathbb{T}, \mathbb{P},\mathbb{W}^{\gamma}) > 0
+\min_{\mathbf{y}^{\gamma},C_k^{\gamma}} \Phi_M^{\gamma}(\mathbf{y}^{\gamma},\boldsymbol{\mu}',\mathbb{W}^{\gamma}) > 0
 $$
-with the auxiliary chemical potential. The total deviation can be measured as follows:
+with the auxiliary chemical potential. Considering the above, the total deviation can be measured as follows:
 $$
 \begin{align*}
-\mathcal{L}(\boldsymbol{\mu}',\mathbb{W}) &= \sum_{\alpha\in\text{stable}} \left[\mathbf{G}_M^{\alpha}(\mathbb{M}^{\alpha}, \mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{M}_{A}^{\alpha}\right]^2 \\ &+ 
-\sum_{\alpha\in\text{stable}} \left[\min_{\mathbf{y}^{\alpha}} \Phi_M^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{W}^{\alpha})\right]^2 + \sum_{\gamma\notin\text{stable}} \mathrm{ReLU}\left[-\min_{\mathbf{y}^{\gamma}} \Phi_M^{\gamma}(\mathbf{y}^{\gamma},\boldsymbol{\mu}',\mathbb{W}^{\gamma})\right]
+\mathcal{L}(\boldsymbol{\mu}',\mathbb{W}) &= \sum_{\alpha\in\text{stable}} \left[\mathbf{G}_m^{\alpha}(\mathbb{X}^{\alpha}, \mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{X}_{A}^{\alpha}\right]^2 \\ &+ 
+\sum_{\alpha\in\text{stable}} \left[\min_{\mathbf{y}^{\alpha},C_k^{\alpha}} \Phi_m^{\alpha}(\mathbf{y}^{\alpha},\boldsymbol{\mu}',\mathbb{W}^{\alpha})\right]^2 \\ &+ \sum_{\gamma\notin\text{stable}} \mathrm{ReLU}\left[-\min_{\mathbf{y}^{\gamma},C_k^{\gamma}} \Phi_m^{\gamma}(\mathbf{y}^{\gamma},\boldsymbol{\mu}',\mathbb{W}^{\gamma})\right]
 \end{align*}
 $$
-at a given auxiliary chemical potential and thermodynamic parameters $\mathbb{W}$. The auxiliary chemical potential need to be optimized so that:
+at a given auxiliary chemical potential and thermodynamic parameters $\mathbb{W}$. We have normalized the energies to per-molar-atoms and $\mathbb{X}$ is the atomic fraction of the observed phase. The auxiliary chemical potential need to be optimized. Thus, optimal parameters can be found as:
 $$
-\mathcal{L}(\mathbb{W}) = \min_{\boldsymbol{\mu}'} \mathcal{L}(\boldsymbol{\mu}',\mathbb{W}) \to 0
+\mathbb{W}_{\mathrm{opt}}= \arg\min_{\mathbb{W}} \left[ \min_{\boldsymbol{\mu}'} \mathcal{L}(\boldsymbol{\mu}',\mathbb{W}) + \lambda \|W\|_2^2 \right]
 $$
-which should be zero when the experimentally observed phase equilibrium is reproduced by model parameter $\mathbb{W}$. Optimized thermodynamic parameter can be found by minimizing $\mathcal{L}(\boldsymbol{\mu}',\mathbb{W})$ with respect to $\mathbb{W}$ and $\boldsymbol{\mu}'$ at the same time.
+where we have introduced the regularization with weight $\lambda$. The first term should be zero when the experimentally observed phase equilibrium is reproduced by optimized model parameter. In practice, $\mathbb{W}_{\mathrm{opt}}$ can be found by minimizing $\mathcal{L}(\boldsymbol{\mu}',\mathbb{W})+ \lambda \|W\|_2^2$ with respect to $\mathbb{W}$ and $\boldsymbol{\mu}'$ at the same time.
 
 ### Constraining auxiliary chemical potential
 
-When the number of phases in equilibrium is equal to the number of chemical components. The requirement that $\sum_{\alpha\in\text{stable}} \left[\mathbf{G}_M^{\alpha}(\mathbb{M}^{\alpha}, \mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{M}_{A}^{\alpha}\right]^2 = 0$ leads to a set of linear equation from which auxiliary chemical potential can be solved. For example, in a binary system, knowing the composition and composition constrained Gibbs energy of two phases allow us to define a chemical potential hyper-plane (a line in the case of binary system) that pass throughs both points. In such case, chemical potential are a function of model parameter $\mathbb{W}$ through its dependence on the Gibbs energy. 
+When the number of phases in equilibrium is equal to the number of chemical components. The loss $\sum_{\alpha\in\text{stable}} \left[\mathbf{G}_m^{\alpha}(\mathbb{X}^{\alpha}, \mathbb{W}^{\alpha}) - \sum_A \mu'_A \mathbb{X}_{A}^{\alpha}\right]^2 = 0$ leads to a full-rank linear system from which auxiliary chemical potential can be solved. For example, in a binary system, knowing the composition and composition constrained Gibbs energy of two phases allow us to define a chemical potential tangent plane that pass throughs both points in the composition-energy space. In such case, it is possible to define $\boldsymbol{\mu}'$ from the above linear equation so that they are a function of model parameter $\mathbb{W}$, thus eliminating them from optimization, as well as the corresponding loss terms.
 
-However, this is not in general possible. Consider a two phase equilibrium in a ternary system. Two points in the energy composition space cannot uniquely define the chemical potential hyperplane. However, the hyperplane can be constrained to cross these two points, so that only one degree of freedom need to be introduced to define the auxiliary potential. This allow us to reduce the number of auxiliary potential term in the minimization.
+However, this is not in general possible. Consider a two phase equilibrium in a ternary system. Two points in the energy composition space cannot uniquely define a chemical potential tangent plane. However, it is possible to force the tangent plane to cross known points from the two phases in equilibrium. Thus, only one degree of freedom need to be introduced to define the auxiliary potential and the first term in the loss function is again eliminated. This allow us to greatly reduce the number of auxiliary potential term that need to be minimized in addition.
 
 ### Envelope theorem
 
-It can be noted that to calculate the loss function, it is necessary to solve the $\mathbf{y}$ that minimizes the constrained Gibbs energy as well as unconstrained grand potential. Since the optimized $\mathbf{y}$ are a function of $\mathbb{W}$, it may seems that the derivative of the loss with respect to $\mathbb{W}$ require the derivative of $\mathbf{y}$ with respect to $\mathbb{W}$, which require auto-differentiation through the optimization of $\mathbf{y}$. However, this can be avoided by using the envelope theorem. To calculate the derivative of loss $\mathcal{L}$ with respect to parameters $\mathbb{W}$, it is only necessary to use the solved $\mathbf{y}$ as input. The internal coordinates of the phases depends on the details of the model and should allow the description of all possible states in the phase space. In phenomenological CALPHAD models with fixed lattice, internal coordinates are usually the occupancy of components on the defined sublattices. 
+Additional minimization with respect to internal coordinates can be found in the defined loss function for both the grand potential term $\Phi$ and Gibbs energy $\mathbf{G}$. Internal coordinates $\mathbf{y}^*$ that minimizes these quantities are themselves a function of $\mathbb{W}$. Fortunately, using the envelope theorem, it is not necessary to evaluate the derivative of $\mathbf{y}^*$ with respect to $\mathbb{W}$. A review of envelop theorem is provided in the Supplementary Materials. To calculate the derivative of loss $\mathcal{L}$ with respect to parameters $\mathbb{W}$, it is only necessary to consider $\mathbf{y}^*$ as input without needing to track the computational graphs that produce $\mathbf{y}^*$.
+
+The internal coordinates of the phases depends on the details of the model and should allow the description of all possible states in the phase space. The simplest coordinates are the composition vector themselves. In phenomenological CALPHAD models with fixed lattice, internal coordinates are usually the occupancy of components on the defined sublattices. The global minimization of internal coordinates for both Gibbs energy and grand potential terms in the framework of CALPHAD can be solved efficient using exponential gradient descend method.
 
 ### Final form
 
@@ -143,40 +150,21 @@ To describe a thermodynamic systems, it is necessary for the model to provide fr
 
 ### Compound energy formalism
 
-In the compound energy formalism description, we define the site fraction for sublattice $s$ of element $A$ whose value is between 0 and 1:
+In the compound energy formalism description, we define the site fraction for sublattice $s$ of element $A$ denoted as $y_A^{(s)} = n_A^{(s)}/(n_A^{(s)}+n_B^{(s)}+\cdots)$
+where $n_A^{(s)}$ is the number of element $A$ per molar formula at the sublattice $s$. The total number of component $A$ in a molar formula unit is obtained by counting the number of $A$ is each sublattices $N_i = \sum_s N_s y_i^{(s)}$ where $N_s$ is the number of sublattice in a molar formula unit. Omitting the pressure, the thermodynamic model is given by:
 $$
-y_A^{(s)} = \frac{n_A^{(s)}}{n_A^{(s)}+n_B^{(s)}+\cdots}
+G_M(\mathbf{y},T) = \sum_{I} P_{I}(\mathbf{y}) g_I + RT \sum_s N_s \sum_{i=A}^{N} y_i^{(s)}\ln y_i^{(s)} + G_M^{\mathrm{ex}}(\mathbf{y},T)
 $$
-where $n_A^{(s)}$ is the number of element $A$ per molar formula at the sublattice $s$. The total number of component $A$ in a molar formula unit is obtained by counting the number of $A$ is each sublattices:
-$$
-M_i = \sum_s N_s y_i^{(s)}; \quad x_i = \frac{M_i}{\sum_j M_j} 
-$$
-where $N_s$ is the number of sublattice in a molar formula unit. For example, in the case of $\sigma$-phase, one formula unit maybe defined to be a unit cell with 30 atoms, and then: $N_{\mathrm{2a}}=2,N_{\mathrm{4f}}=4, \cdots$. The later expression gives the chemical composition of $A$ in molar fraction. The thermodynamic model is given by:
-$$
-G_M(\mathbf{y},\mathbb{T}) = \sum_{I} P_{I}(\mathbf{y}) g_I + RT \sum_s N_s \sum_{i=A}^{N} y_i^{(s)}\ln y_i^{(s)} + G_M^{\mathrm{ex}}(\mathbf{y},\mathbb{T})
-$$
-where the first sum over $I$ is over possible component array specifying the occupancy of sites in the end-members. For example: $I=(AB\cdots)$ with $A$ occupy the first sublattice, etc, and $g_I$ can be interpreted as its end-member energy $g_{AB\cdots}$. The value of $P_I$ is $y_A^{(1)}y_B^{(1)}\cdots$.
+where the first sum over $I$ is over possible component array specifying the occupancy of sites in the end-members. For example: $I=(AB\cdots)$ with $A$ occupy the first sublattice, etc, and $g_I$ can be interpreted as its end-member energy $g_{AB\cdots}$. The value of $P_I$ is $y_A^{(1)}y_B^{(1)}\cdots$. 
 
-Contribution from pairwise excess term can be defined as follows, where $L^{(n)}=L(T)$ is a temperature polynomial:
+The excess energy term can be consist of different terms. Contribution from pairwise excess term can be defined as follows, where $L^{(n)}=L(T)$ is a temperature polynomial:
 $$
 G^{\mathrm{ex,pair}}_{M,ab\cdots\underbrace{(ij)}_{(s)}\cdots c}
 = y_a^{(1)}y_b^{(2)}\cdots (y_i^{(s)}y_j^{(s)})\cdots y_c^{(N)} \left[
 \sum_{n=0}^{v}L^{(n)} (y_i^{(s)}-y_j^{(s)})^n
 \right]
 $$
-where the index $[ab\cdots(ij)_{(s)}\cdots c]$ means that the specific term is related to the mixing on the $(s)$-th sublattice with component $i$ and $j$, while all other sublattices are occupied by $a,b,\cdots, c$, respectively. $v$ index the order of the excess term.
-
-For the two sublattice binary mixing, one possible definition is given as follows:
-$$
-\begin{align*}
-G^{\mathrm{ex,2pair}}_{M,ab\cdots\underbrace{(ij)}_{(s)}\cdots\underbrace{(mn)}_{(r)}\cdots c}
-= y_a^{(1)}y_b^{(2)}\cdots & (y_i^{(s)}y_j^{(s)})\cdots(y_m^{(r)}y_n^{(r)})\cdots y_c^{(N)} \\
-&\times \left[
-L^{(0)} + (y_m^{(r)}-y_n^{(r)})L^{(1)} + (y_i^{(s)}-y_j^{(s)})L^{(2)} 
-\right]
-\end{align*}
-$$
-
+where the index $ab\cdots(ij)_{(s)}\cdots c$ means that the specific term is related to the mixing on the $(s)$-th sublattice with component $i$ and $j$, while all other sublattices are occupied by $a,b,\cdots, c$, respectively. $v$ index the order of the excess term. 
 Ternary mixing on the same site can be given as follows, with order on interaction parameter limited to (0,1,2):
 $$
 G^{\mathrm{ex,ternary}}_{M,ab\cdots\underbrace{(ijk)}_{(s)}\cdots c}
@@ -189,7 +177,16 @@ v_j = y^{(s)}_j + (1-y^{(s)}_i-y^{(s)}_j-y^{(s)}_k)/3\\
 v_k = y^{(s)}_k + (1-y^{(s)}_i-y^{(s)}_j-y^{(s)}_k)/3
 \end{cases}
 $$
-From this definition, extension to quaternary mixing on the same lattice will be possible. 
+and for the two sublattice binary mixing, one possible definition is given as follows:
+$$
+\begin{align*}
+G^{\mathrm{ex,2pair}}_{M,ab\cdots\underbrace{(ij)}_{(s)}\cdots\underbrace{(mn)}_{(r)}\cdots c}
+= y_a^{(1)}y_b^{(2)}\cdots & (y_i^{(s)}y_j^{(s)})\cdots(y_m^{(r)}y_n^{(r)})\cdots y_c^{(N)} \\
+&\times \left[
+L^{(0)} + (y_m^{(r)}-y_n^{(r)})L^{(1)} + (y_i^{(s)}-y_j^{(s)})L^{(2)} 
+\right]
+\end{align*}
+$$
 
 Implementation notes:
 - To make the energy competible to `pycalphad` definition, if only the $L^{(0)}$ term is specified, it will be set that $L^{(0)} = L^{(1)} = L^{(2)}$.

@@ -107,6 +107,29 @@ def _save_equilibrium_states_without_runtime_data(
             eq_state.runtime_data = runtime_data
 
 
+def _project_equilibrium_compositions(
+    system: ThermodynamicSystem,
+    equilibria: Sequence[PhaseEquilibrium],
+    *,
+    tol: float,
+) -> tuple[PhaseEquilibrium, ...]:
+    return tuple(
+        PhaseEquilibrium(
+            phases=equilibrium.phases,
+            phase_compositions=tuple(
+                system.project_composition(phase, composition, tol=tol)
+                for phase, composition in zip(
+                    equilibrium.phases,
+                    equilibrium.phase_compositions,
+                    strict=True,
+                )
+            ),
+            temperature=equilibrium.temperature,
+        )
+        for equilibrium in equilibria
+    )
+
+
 def _aggregate_loss_parts(
     equilibrium_losses: Sequence[PhaseEquilibriumOptState],
     batch_indices: Sequence[int],
@@ -128,6 +151,7 @@ def _aggregate_loss_parts(
             system,
             relu_margin=config.relu_margin,
             unstable_huber_beta=config.unstable_huber_beta,
+            use_huber_for_stable_phases=config.use_huber_for_stable_phases,
             scale_energy_by_rt=config.scale_energy_by_rt,
         )
         stable = stable + record.stable_loss
@@ -440,6 +464,16 @@ def optimize_thermodynamic_parameters(
         )
         console.print(f"loaded equilibrium states from {last_eqstate_path}")
     elif equilibrium_states is None and equilibria is not None:
+        console.print(
+            'Creating optimization state of phase equilibrium, projecting compositions...',
+            end=''
+        )
+        equilibria = _project_equilibrium_compositions(
+            system,
+            equilibria,
+            tol=config.composition_projection_tol,
+        )
+        console.print('DONE!')
         equilibrium_states = tuple(
             PhaseEquilibriumOptState(eq, mu_strategy=config.mu_strategy)
             for eq in equilibria
@@ -454,6 +488,7 @@ def optimize_thermodynamic_parameters(
                 convergence_tol=config.mu_convergence_tol,
                 relu_margin=config.relu_margin,
                 unstable_huber_beta=config.unstable_huber_beta,
+                use_huber_for_stable_phases=config.use_huber_for_stable_phases,
                 scale_energy_by_rt=config.scale_energy_by_rt,
                 console=console
             )
@@ -494,6 +529,9 @@ def optimize_thermodynamic_parameters(
     console.print(f"batch size = {effective_batch_size}")
     console.print(f"scale energy by RT = {config.scale_energy_by_rt}")
     console.print(f"unstable huber beta = {config.unstable_huber_beta}")
+    console.print(
+        f"use huber for stable phases = {config.use_huber_for_stable_phases}"
+    )
     console.print(f"stable weight = {config.stable_weight}")
     console.print(f"unstable weight = {config.unstable_weight}")
     console.print(f"regularization weight = {config.regularization_weight}")

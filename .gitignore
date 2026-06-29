@@ -4,8 +4,11 @@ examples/**/*.ipynb
 examples/**/*.pkl
 examples/**/*.png
 examples/**/checkpoint/
+examples/**/figures/
 misc
 **/__pycache__
 src/*.py
 src/*.ipynb
 *.code-workspace
+manuscript
+**/.DS_Store

@@ -18,6 +18,28 @@ class ThermodynamicModel(nn.Module, ABC):
         return None
 
 
+    def project_composition(
+        self,
+        comp: Mapping[str, float],
+        *,
+        tol: float = 1.0e-3,
+    ) -> Mapping[str, float]:
+        """Return a normalized phase composition, optionally projected by subclasses."""
+        values = {
+            element: float(comp.get(element, 0.0))
+            for element in self.elements
+        }
+        total = sum(values.values())
+        if total <= 0.0:
+            raise ValueError(
+                f"Composition for phase {self.phase_name} must have positive sum."
+            )
+        return {
+            element: value / total
+            for element, value in values.items()
+        }
+
+
     @abstractmethod
     def gibbs_energy_per_molar_atom(
         self,

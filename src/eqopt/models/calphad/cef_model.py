@@ -25,10 +25,9 @@ from .cef_terms import (
 class CEFCache:
     gibbs_base_y: torch.Tensor | None = None
     gibbs_live_y: torch.Tensor | None = None
+    gibbs_eta_factor: float = 1.0
     grand_potential_base_y: torch.Tensor | None = None
     grand_potential_live_y: torch.Tensor | None = None
-
-
 
 
 @dataclasses.dataclass(frozen=True)
@@ -36,30 +35,31 @@ class CEFConfig:
     """Default external-facing numerical options for CEF evaluations."""
 
     # shared sampling/min-pooling options
-    n_samples: int = 64
-    n_samples_cached: int = 4
-    use_softmin: bool = True
-    softmin_tau: float | None = None
-    eps: float = 1.0e-8
+    n_samples: int = 64                         # base sample count/density
+    n_samples_cached: int = 4                   # live points cached after minimization
+    use_softmin: bool = True                    # pool sampled minima with softmin
+    softmin_tau: float | None = None            # softmin temperature; auto if None
+    eps: float = 1.0e-8                         # numerical floor for divisions/logs
 
     # grand-potential options
-    grand_potential_steps: int = 6
-    grand_potential_delta: float = 0.3
-    max_step_factor: float = 1.5
+    grand_potential_steps: int = 6              # EGD steps for grand potential
+    grand_potential_delta: float = 0.3          # target simplex step size
+    max_step_factor: float = 1.5                # shrink step if update exceeds this
 
     # fixed-composition Gibbs-energy options
-    gibbs_energy_steps: int = 6
-    gibbs_energy_delta: float = 0.3
-    gibbs_energy_max_logit_step: float | None = 5.0
+    gibbs_energy_steps: int = 6                 # constrained EGD steps for Gibbs energy
+    gibbs_energy_delta: float = 0.3             # target constrained primal step size
+    gibbs_energy_max_logit_step: float | None = 3.0  # cap primal logit change
+    active_composition_tol: float = 1.0e-8      # below this, components are inactive
 
     # constrained-EGD dual solve options
-    newton_steps: int = 20
-    newton_damping: float = 1.0e-10
-    max_dual_step: float = 2.0
-    constraint_tol: float = 1.0e-8
-    dual_backtracking_steps: int = 10
-    primal_backtracking_steps: int = 6
-    composition_penalty_weight: float | None = None
+    newton_steps: int = 20                      # Newton iterations for dual constraints
+    newton_damping: float = 1.0e-10             # diagonal damping in dual Newton solve
+    max_dual_step: float = 2.0                  # clamp for each dual Newton step
+    constraint_tol: float = 1.0e-6              # composition constraint tolerance
+    dual_backtracking_steps: int = 10           # backtracking trials in dual Newton solve
+    primal_backtracking_steps: int = 6          # backtracking trials for primal EGD step
+    composition_penalty_weight: float | None = None  # optional penalty for composition drift
 
 
     def update(self, **kwargs) -> "CEFConfig":
@@ -220,7 +220,12 @@ class CEF(ThermodynamicModel):
         if self._is_fixed_stoichiometry():
             y = self._fixed_internal_dof(target_x.shape[:-1])
             fixed_x = self._composition_from_internal_dof(y)
-            if not torch.allclose(fixed_x, target_x, atol=1.0e-6, rtol=0.0):
+            if not torch.allclose(
+                fixed_x,
+                target_x,
+                atol=1.0e-6,
+                rtol=0.0,
+            ):
                 raise ValueError(
                     f"{self.phase_name} has fixed composition "
                     f"{fixed_x.detach().cpu().tolist()}; got "
@@ -310,6 +315,150 @@ class CEF(ThermodynamicModel):
             reduce_by_fps=True,
             n_samples_to_sample=nsamples*10
         )
+
+
+    def _linear_constraints_for_target_x(
+        self,
+        target_x: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return linear constraints used by the fixed-composition sampler."""
+        n_sublattice = len(self.sublattice_multiplicities)
+        n_total_multiplicity = sum(self.sublattice_multiplicities)
+        ncols = len(self.y_names)
+        nrows = len(self.sublattice_multiplicities) + len(self.elements) - 1
+        c_matrix = torch.zeros(
+            (nrows, ncols),
+            device=target_x.device,
+            dtype=target_x.dtype,
+        )
+        d_matrix = torch.zeros(nrows, device=target_x.device, dtype=target_x.dtype)
+
+        d_matrix[:n_sublattice] = 1.0
+        element_to_constraint = {}
+        for element_index, element in enumerate(self.elements[:-1]):
+            d_matrix[n_sublattice + element_index] = (
+                target_x[element_index] * n_total_multiplicity
+            )
+            element_to_constraint[element] = element_index
+
+        for y_index, (component, sublattice_index) in enumerate(self.y_names):
+            c_matrix[sublattice_index, y_index] = 1.0
+            multiplicity = self.sublattice_multiplicities[sublattice_index]
+            if component in element_to_constraint:
+                c_matrix[
+                    n_sublattice + element_to_constraint[component],
+                    y_index,
+                ] = multiplicity
+            elif component.upper() == "VA":
+                for element in self.elements[:-1]:
+                    c_matrix[
+                        n_sublattice + element_to_constraint[element],
+                        y_index,
+                    ] = multiplicity * target_x[element_to_constraint[element]]
+
+        return c_matrix, d_matrix
+
+
+    def _project_target_x_to_feasible_composition(
+        self,
+        target_x: torch.Tensor,
+        *,
+        tol: float,
+    ) -> torch.Tensor:
+        """Snap rounded input composition to the nearest feasible CEF composition."""
+        target_x = torch.as_tensor(
+            target_x,
+            device=self.multi_for_each_y.device,
+            dtype=self.multi_for_each_y.dtype,
+        )
+        target_x = target_x / target_x.sum().clamp_min(1.0e-12)
+        from scipy.optimize import minimize
+
+        target_numpy = target_x.detach().cpu().numpy()
+        element_to_index = {
+            element: index
+            for index, element in enumerate(self.elements)
+        }
+        def composition_from_y_numpy(y: np.ndarray) -> np.ndarray:
+            amounts = np.zeros(len(self.elements), dtype=float)
+            for y_index, (component, sublattice_index) in enumerate(self.y_names):
+                if component.upper() == "VA":
+                    continue
+                amounts[element_to_index[component]] += (
+                    self.sublattice_multiplicities[sublattice_index] * y[y_index]
+                )
+            total = np.sum(amounts)
+            if total <= 1.0e-14:
+                return np.full(len(self.elements), np.nan, dtype=float)
+            return amounts / total
+
+        y0 = self._internal_dof_from_reduced_logits(
+            self._initial_logits_from_composition(target_x)
+        ).detach().cpu().numpy()
+
+        sublattice_constraints = []
+        column_start = 0
+        for n_components in self.ncomp_for_each_sublattice:
+            column_stop = column_start + n_components
+            sublattice_slice = slice(column_start, column_stop)
+            sublattice_constraints.append({
+                "type": "eq",
+                "fun": lambda y, s=sublattice_slice: np.sum(y[s]) - 1.0,
+            })
+            column_start = column_stop
+
+        def objective(y: np.ndarray) -> float:
+            composition = composition_from_y_numpy(y)
+            if not np.all(np.isfinite(composition)):
+                return 1.0e12
+            residual = composition - target_numpy
+            return float(residual @ residual)
+
+        result = minimize(
+            objective,
+            y0,
+            method="SLSQP",
+            bounds=[(0.0, 1.0)] * len(self.y_names),
+            constraints=sublattice_constraints,
+            options={
+                "ftol": 1.0e-14,
+                "maxiter": 200,
+                "disp": False,
+            },
+        )
+        projected_x_numpy = composition_from_y_numpy(result.x)
+        if np.all(np.isfinite(projected_x_numpy)):
+            return torch.as_tensor(
+                projected_x_numpy,
+                device=target_x.device,
+                dtype=target_x.dtype,
+            )
+
+        raise ValueError(
+            f"Could not project composition {dict(zip(self.elements, target_numpy))} "
+            f"for phase {self.phase_name}. SLSQP success={result.success}."
+        )
+
+
+    def project_composition(
+        self,
+        comp: Mapping[str, float],
+        *,
+        tol: float = 1.0e-3,
+    ) -> Mapping[str, float]:
+        target_x = torch.as_tensor(
+            [comp.get(element, 0.0) for element in self.elements],
+            device=self.multi_for_each_y.device,
+            dtype=self.multi_for_each_y.dtype,
+        )
+        projected_x = self._project_target_x_to_feasible_composition(
+            target_x.clamp_min(1.0e-12),
+            tol=tol,
+        )
+        return {
+            element: float(projected_x[index].detach().cpu())
+            for index, element in enumerate(self.elements)
+        }
 
 
     # common functions
@@ -595,7 +744,8 @@ class CEF(ThermodynamicModel):
                 dtype=self.multi_for_each_y.dtype,
             )
 
-        optimized_y = self._optimize_y_constrained_gibbs_EGD(
+        eta_factor = 1.0 if cache is None else cache.gibbs_eta_factor
+        optimized_result = self._optimize_y_constrained_gibbs_EGD(
             sampled_initial,
             composition,
             temperature,
@@ -609,8 +759,15 @@ class CEF(ThermodynamicModel):
             max_backtracking_steps=self.config.dual_backtracking_steps,
             max_primal_backtracking_steps=self.config.primal_backtracking_steps,
             composition_penalty_weight=self.config.composition_penalty_weight,
+            active_composition_tol=self.config.active_composition_tol,
+            eta_factor=eta_factor,
+            return_eta_factor=cache is not None,
             eps=self.config.eps
         )
+        if cache is None:
+            optimized_y = optimized_result
+        else:
+            optimized_y, cache.gibbs_eta_factor = optimized_result
 
         values = self._energy_from_internal_dof(
             optimized_y,
@@ -649,7 +806,7 @@ class CEF(ThermodynamicModel):
         *,
         n_steps: int = 6,
         delta: float = 0.3,
-        max_logit_step: float | None = 10.0,
+        max_logit_step: float | None = 3.0,
         n_newton_steps: int = 20,
         newton_damping: float = 1.0e-10,
         max_dual_step: float = 2.0,
@@ -657,8 +814,11 @@ class CEF(ThermodynamicModel):
         max_backtracking_steps: int = 8,
         max_primal_backtracking_steps: int = 6,
         composition_penalty_weight: float | None = None,
+        active_composition_tol: float = 1.0e-8,
+        eta_factor: float = 1.0,
+        return_eta_factor: bool = False,
         eps: float = 1.0e-8
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | tuple[torch.Tensor, float]:
         """Optimize feasible site fractions at fixed composition using EGD.
 
         Sublattice normalization is enforced by softmax-like normalization on
@@ -689,10 +849,27 @@ class CEF(ThermodynamicModel):
         )
         target_x = target_x.clamp_min(1.0e-12)
         target_x = target_x / target_x.sum().clamp_min(1.0e-12)
+        eta_factor = float(max(0.0, min(1.0, eta_factor)))
+        active_y_mask, active_ncomp = self._active_internal_dof_mask(
+            target_x,
+            active_tol=active_composition_tol,
+        )
+        active_y = y[..., active_y_mask]
+        active_y = self._normalize_sublattices_from_counts(active_y, active_ncomp)
 
-        n_constraints = max(len(self.elements) - 1, 0)
+        active_elements = tuple(
+            element
+            for element, x_value in zip(self.elements, target_x, strict=True)
+            if bool(x_value > active_composition_tol)
+        )
+        n_constraints = max(len(active_elements) - 1, 0)
         if int(n_steps) <= 0:
-            return y.squeeze(0) if squeeze_output else y
+            full_y = self._expand_active_internal_dof(active_y, active_y_mask)
+            if squeeze_output:
+                full_y = full_y.squeeze(0)
+            if return_eta_factor:
+                return full_y, eta_factor
+            return full_y
         if composition_penalty_weight is None:
             composition_penalty = 100.0 * torch.abs(R * temperature).clamp_min(1.0)
         else:
@@ -705,16 +882,28 @@ class CEF(ThermodynamicModel):
         if n_constraints:
             total_multiplicity = sum(self.sublattice_multiplicities)
             constraint_matrix = torch.zeros(
-                (n_constraints, len(self.y_names)),
+                (n_constraints, int(active_y_mask.sum().item())),
                 device=y.device,
                 dtype=y.dtype,
             )
-            constraint_rhs = target_x[:n_constraints] * total_multiplicity
+            constrained_elements = active_elements[:-1]
+            constraint_rhs = torch.stack(
+                [
+                    target_x[self.elements.index(element)] * total_multiplicity
+                    for element in constrained_elements
+                ],
+                dim=0,
+            )
             element_to_constraint = {
                 element: index
-                for index, element in enumerate(self.elements[:-1])
+                for index, element in enumerate(constrained_elements)
             }
-            for y_index, (component, sublattice_index) in enumerate(self.y_names):
+            active_y_names = [
+                y_name
+                for y_name, is_active in zip(self.y_names, active_y_mask, strict=True)
+                if bool(is_active)
+            ]
+            for y_index, (component, sublattice_index) in enumerate(active_y_names):
                 multiplicity = self.sublattice_multiplicities[sublattice_index]
                 if component in element_to_constraint:
                     constraint_matrix[
@@ -722,12 +911,13 @@ class CEF(ThermodynamicModel):
                         y_index,
                     ] = multiplicity
                 elif component.upper() == "VA":
-                    constraint_matrix[:, y_index] = (
-                        multiplicity * target_x[:n_constraints]
-                    )
+                    for element, constraint_index in element_to_constraint.items():
+                        constraint_matrix[constraint_index, y_index] = (
+                            multiplicity * target_x[self.elements.index(element)]
+                        )
         else:
             constraint_matrix = torch.empty(
-                (0, len(self.y_names)),
+                (0, int(active_y_mask.sum().item())),
                 device=y.device,
                 dtype=y.dtype,
             )
@@ -735,26 +925,31 @@ class CEF(ThermodynamicModel):
         sublattice_slices = []
         constraint_blocks = []
         column_start = 0
-        for n_components in self.ncomp_for_each_sublattice:
+        for n_components in active_ncomp:
             column_stop = column_start + n_components
             sublattice_slice = slice(column_start, column_stop)
             sublattice_slices.append(sublattice_slice)
             constraint_blocks.append(constraint_matrix[:, sublattice_slice])
             column_start = column_stop
 
-        optimized_y = y.detach()
+        optimized_y = active_y.detach()
         dual_mu = None
+        max_observed_backtrack = 0
         with torch.enable_grad():
             for _ in range(int(n_steps)):
                 optimized_y = optimized_y.detach().requires_grad_(True)
-                values = self._energy_from_internal_dof(
+                full_optimized_y = self._expand_active_internal_dof(
                     optimized_y,
+                    active_y_mask,
+                )
+                values = self._energy_from_internal_dof(
+                    full_optimized_y,
                     temperature,
                     normalize_by_amount=True
                 )
                 if n_constraints:
                     composition_residual = (
-                        self._composition_from_internal_dof(optimized_y)
+                        self._composition_from_internal_dof(full_optimized_y)
                         - target_x
                     )
                     values = values + composition_penalty * (
@@ -774,7 +969,7 @@ class CEF(ThermodynamicModel):
                     dtype=optimized_y.dtype,
                 )
                 column_start = 0
-                for n_components in self.ncomp_for_each_sublattice:
+                for n_components in active_ncomp:
                     column_stop = column_start + n_components
                     w = optimized_y[..., column_start:column_stop].detach()
                     g = grad_y[..., column_start:column_stop].detach()
@@ -786,6 +981,11 @@ class CEF(ThermodynamicModel):
                     column_start = column_stop
 
                 eta = delta / scale.clamp_min(eps)
+                eta = eta * torch.as_tensor(
+                    eta_factor,
+                    device=eta.device,
+                    dtype=eta.dtype,
+                )
                 if max_logit_step is not None:
                     max_abs_logit_step = (eta * grad_y.detach()).abs().amax(
                         dim=-1,
@@ -840,6 +1040,13 @@ class CEF(ThermodynamicModel):
                     if bool(torch.all(accepted)):
                         break
 
+                max_observed_backtrack = max(
+                    max_observed_backtrack,
+                    int(backtrack_index),
+                )
+                if backtrack_index == 6:
+                    print(f'[warning] Outer backtracking is happening upto maximal step: {self.phase_name}, {composition}')
+
                 if bool(torch.any(accepted)):
                     optimized_y = updated_y.detach()
                     dual_mu = updated_mu
@@ -847,9 +1054,97 @@ class CEF(ThermodynamicModel):
                     optimized_y = previous_y
                     dual_mu = previous_mu
 
+        optimized_y = self._expand_active_internal_dof(optimized_y, active_y_mask)
         if squeeze_output:
-            return optimized_y.squeeze(0)
+            optimized_y = optimized_y.squeeze(0)
+        if return_eta_factor:
+            if max_observed_backtrack > 0:
+                eta_factor = max(
+                    1.0e-3,
+                    eta_factor * (0.5 ** max_observed_backtrack),
+                )
+            else:
+                eta_factor = min(1.0, eta_factor * 1.02)
+            return optimized_y, eta_factor
         return optimized_y
+
+
+    def _active_internal_dof_mask(
+        self,
+        target_x: torch.Tensor,
+        *,
+        active_tol: float,
+    ) -> tuple[torch.Tensor, tuple[int, ...]]:
+        element_to_index = {
+            element: index
+            for index, element in enumerate(self.elements)
+        }
+        mask_values = []
+        active_ncomp = []
+        for sublattice_components in self.components_on_sublattices:
+            sublattice_mask = []
+            for component in sublattice_components:
+                is_active = (
+                    component.upper() == "VA"
+                    or (
+                        component in element_to_index
+                        and bool(target_x[element_to_index[component]] > active_tol)
+                    )
+                )
+                sublattice_mask.append(is_active)
+                mask_values.append(is_active)
+            n_active = sum(sublattice_mask)
+            if n_active == 0:
+                raise ValueError(
+                    f"Composition {dict(zip(self.elements, target_x.detach().cpu().tolist()))} "
+                    f"leaves no active species on one sublattice of {self.phase_name}."
+                )
+            active_ncomp.append(n_active)
+        return (
+            torch.as_tensor(
+                mask_values,
+                device=target_x.device,
+                dtype=torch.bool,
+            ),
+            tuple(active_ncomp),
+        )
+
+
+    @staticmethod
+    def _normalize_sublattices_from_counts(
+        y: torch.Tensor,
+        ncomp_for_each_sublattice: Sequence[int],
+    ) -> torch.Tensor:
+        parts = []
+        column_start = 0
+        for n_components in ncomp_for_each_sublattice:
+            column_stop = column_start + n_components
+            sublattice_y = y[..., column_start:column_stop].clamp_min(0.0)
+            total = sublattice_y.sum(dim=-1, keepdim=True)
+            uniform = torch.full_like(sublattice_y, 1.0 / n_components)
+            parts.append(
+                torch.where(
+                    total > 1.0e-12,
+                    sublattice_y / total.clamp_min(1.0e-12),
+                    uniform,
+                )
+            )
+            column_start = column_stop
+        return torch.cat(parts, dim=-1)
+
+
+    def _expand_active_internal_dof(
+        self,
+        active_y: torch.Tensor,
+        active_y_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        full_y = torch.zeros(
+            (*active_y.shape[:-1], len(self.y_names)),
+            device=active_y.device,
+            dtype=active_y.dtype,
+        )
+        full_y[..., active_y_mask] = active_y
+        return full_y
 
 
     @staticmethod

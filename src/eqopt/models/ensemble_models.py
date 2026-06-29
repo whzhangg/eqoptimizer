@@ -41,6 +41,17 @@ class EnsembleSystem(ThermodynamicSystem):
             raise KeyError(f"Unknown phase id: {phase_id}") from None
 
 
+    def project_composition_for_phase(
+        self,
+        phase_id: PhaseID,
+        comp: Mapping[str, float],
+        *,
+        tol: float = 1.0e-3,
+    ) -> Mapping[str, float]:
+        model = self.key_to_model[self._get_phase_key(phase_id)]
+        return model.project_composition(comp, tol=tol)
+
+
     def gibbs_energy_per_molar_atom_for_phase(self,
         phase_id: PhaseID,
         comp: Mapping[str, float],

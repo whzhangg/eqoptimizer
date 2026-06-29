@@ -194,6 +194,15 @@ class PhaseEquilibriumOptState(torch.nn.Module):
         if self.mu is None:
             raise RuntimeError("Latent chemical-potential RHS parameter is missing.")
         g_vector = self._stable_gibbs_vector(system)
+        return self.solve_mu_augmented_from_gibbs(g_vector)
+
+
+    def solve_mu_augmented_from_gibbs(
+        self,
+        g_vector: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.mu is None:
+            raise RuntimeError("Latent chemical-potential RHS parameter is missing.")
         known_rhs = g_vector[list(self.independent_stable_row_indices)]
         rhs = torch.cat([known_rhs, self.mu], dim=0)
         return torch.linalg.solve(self.augmented_x_matrix, rhs)
@@ -208,6 +217,7 @@ class PhaseEquilibriumOptState(torch.nn.Module):
         convergence_tol: float = 50.0,
         relu_margin: float = 0.0,
         unstable_huber_beta: float | None = 1.0,
+        use_huber_for_stable_phases: bool = False,
         scale_energy_by_rt: bool = True,
         console = None,
     ):
@@ -217,7 +227,7 @@ class PhaseEquilibriumOptState(torch.nn.Module):
             return
 
         with torch.no_grad():
-            g_vector = self._stable_gibbs_vector(system)
+            g_vector = self._stable_gibbs_vector(system).detach()
             mu_guess = torch.linalg.pinv(self.x_matrix) @ g_vector
             self.mu.copy_(self.gauge_x_matrix @ mu_guess)
 
@@ -253,11 +263,13 @@ class PhaseEquilibriumOptState(torch.nn.Module):
             for steps in range(1, max_iter + 1):
                 previous_mu = self.mu.detach().clone()
                 optimizer.zero_grad(set_to_none=True)
-                loss_parts = phase_equilibrium_loss_parts(
+                loss_parts = phase_equilibrium_loss_parts_with_stable_gibbs(
                     self,
                     system,
+                    g_vector,
                     relu_margin=relu_margin,
                     unstable_huber_beta=unstable_huber_beta,
+                    use_huber_for_stable_phases=use_huber_for_stable_phases,
                     scale_energy_by_rt=scale_energy_by_rt,
                 )
                 loss = (
@@ -280,7 +292,7 @@ class PhaseEquilibriumOptState(torch.nn.Module):
                     f"converged to {convergence_tol:g} J/mol: {converged}, "
                     f"max delta={max_delta:10.2e} J/mol"
                 )
-                current_mu = self.solve_mu_augmented(system)
+                current_mu = self.solve_mu_augmented_from_gibbs(g_vector)
                 mu_text = ", ".join(
                     f"mu_{element}={_format_scalar_for_print(current_mu[index])}"
                     for index, element in enumerate(self.elements)
@@ -302,16 +314,33 @@ class PhaseEquilibriumOptState(torch.nn.Module):
         if self.strategy == "analytic":
             # solve mu analytically
             g_vector = self._stable_gibbs_vector(system)
-            if self.x_matrix.shape[0] == self.x_matrix.shape[1]:
-                mu = torch.linalg.solve(self.x_matrix, g_vector)
-            else:
-                mu = torch.linalg.lstsq(self.x_matrix, g_vector).solution
+            mu = self.solve_mu_from_gibbs(g_vector)
         else:
             # latent mu
             if self.mu is None:
                 raise RuntimeError("Latent chemical potential parameter is missing.")
             mu = self.solve_mu_augmented(system)
 
+        return {
+            element: mu[index]
+            for index, element in enumerate(self.elements)
+        }
+
+
+    def solve_mu_from_gibbs(self, g_vector: torch.Tensor) -> torch.Tensor:
+        if self.strategy == "analytic":
+            if self.x_matrix.shape[0] == self.x_matrix.shape[1]:
+                return torch.linalg.solve(self.x_matrix, g_vector)
+            return torch.linalg.lstsq(self.x_matrix, g_vector).solution
+
+        return self.solve_mu_augmented_from_gibbs(g_vector)
+
+
+    def mu_dict_from_gibbs(
+        self,
+        g_vector: torch.Tensor,
+    ) -> Mapping[str, torch.Tensor]:
+        mu = self.solve_mu_from_gibbs(g_vector)
         return {
             element: mu[index]
             for index, element in enumerate(self.elements)
@@ -354,6 +383,7 @@ def phase_equilibrium_loss_parts(
     *,
     relu_margin: float = 0.0,
     unstable_huber_beta: float | None = 1.0,
+    use_huber_for_stable_phases: bool = False,
     scale_energy_by_rt: bool = True,
 ) -> EquilibriumLossRecord:
     temperature = torch.as_tensor(
@@ -388,9 +418,102 @@ def phase_equilibrium_loss_parts(
 
     stable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
     if phi_observed:
-        stable_total = (
-            torch.stack(phi_observed) / rt
-        ).square().sum()
+        stable_residual = torch.stack(phi_observed) / rt
+        if use_huber_for_stable_phases and unstable_huber_beta is not None:
+            stable_total = F.smooth_l1_loss(
+                stable_residual,
+                torch.zeros_like(stable_residual),
+                beta=unstable_huber_beta / energy_scale,
+                reduction="sum",
+            )
+        else:
+            stable_total = stable_residual.square().sum()
+
+    unstable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+    if phi_all:
+        unstable_violation = F.relu(
+            (relu_margin - torch.stack(phi_all)) / rt
+        )
+        if unstable_huber_beta is None:
+            unstable_penalty = unstable_violation.sum()
+        else:
+            unstable_penalty = F.smooth_l1_loss(
+                unstable_violation,
+                torch.zeros_like(unstable_violation),
+                beta=unstable_huber_beta / energy_scale,
+                reduction="sum",
+            )
+        unstable_total = unstable_penalty
+
+    return EquilibriumLossRecord(
+        equilibrium=state.equilibrium,
+        mu_strategy=state.strategy,
+        mu=mu_dict,
+        phi=phi_by_id,
+        stable_phase_ids=state.stable_phase_ids,
+        stable_loss=stable_total,
+        unstable_loss=unstable_total,
+    )
+
+
+def phase_equilibrium_loss_parts_with_stable_gibbs(
+    state: PhaseEquilibriumOptState,
+    system: ThermodynamicSystem,
+    stable_gibbs_vector: torch.Tensor,
+    *,
+    relu_margin: float = 0.0,
+    unstable_huber_beta: float | None = 1.0,
+    use_huber_for_stable_phases: bool = False,
+    scale_energy_by_rt: bool = True,
+) -> EquilibriumLossRecord:
+    """Loss parts reusing precomputed stable Gibbs energies.
+
+    This is useful while optimizing only latent chemical potentials with
+    thermodynamic model parameters frozen. Grand potentials are still evaluated
+    each call because they depend on the current chemical potential.
+    """
+    temperature = torch.as_tensor(
+        state.equilibrium.temperature,
+        device=DEFAULT_DEVICE,
+        dtype=DEFAULT_TYPE,
+    )
+    if scale_energy_by_rt:
+        rt = R * temperature
+        energy_scale = float(rt.detach().cpu())
+    else:
+        rt = 1.0
+        energy_scale = 1.0
+    mu_dict = state.mu_dict_from_gibbs(stable_gibbs_vector)
+
+    phases_to_evaluate = tuple(system.get_competing_phases(state.elements))
+    phi_by_id = {
+        phase: system.get_grand_potential(
+            phase,
+            mu_dict,
+            temperature,
+            state.get_runtime_data(),
+        )
+        for phase in phases_to_evaluate
+    }
+
+    phi_observed = [
+        phi_by_id[phase]
+        for phase in state.equilibrium.phases
+    ]
+    phi_all = list(phi_by_id.values())
+
+    stable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+    if phi_observed:
+        stable_residual = torch.stack(phi_observed) / rt
+        if use_huber_for_stable_phases and unstable_huber_beta is not None:
+            stable_total = F.smooth_l1_loss(
+                stable_residual,
+                torch.zeros_like(stable_residual),
+                beta=unstable_huber_beta / energy_scale,
+                reduction="sum",
+            )
+        else:
+            stable_total = stable_residual.square().sum()
 
     unstable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
     if phi_all:
