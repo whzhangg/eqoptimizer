@@ -12,3 +12,4 @@ src/*.ipynb
 *.code-workspace
 manuscript
 **/.DS_Store
+.vscode
