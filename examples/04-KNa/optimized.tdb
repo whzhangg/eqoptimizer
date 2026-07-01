@@ -1,0 +1,57 @@
+$ K-Na
+$--------1---------2---------3---------4---------5---------6---------7---------8
+$
+$ TDB-file for the thermodynamic assessment of the K-Na system
+$
+$------------------------------------------------------------------------------
+$ 2023.3.16
+$ 
+$ TDB file created by T.Abe, K.Hashimoto, and K.Hirose
+$
+$ Computational Structural Materials Group, National Institute for
+$ Materials Science. 1-2-1 Sengen, Tsukuba, Ibaraki 305-0047, Japan
+$ e-mail: abe.taichi (at) nims.go.jp 
+$ Copyright (C) NIMS 2023
+$
+$------------------------------------------------------------------------------
+$ PARAMETERS ARE TAKEN FROM
+$
+$ [11Ren]
+$ Thermodynamic assessments of six binary systems of alkali metals,
+$ X.Ren, C.Li, Z.Du, C.Guo, CALPHAD, 35 (2011) 446-454.
+$
+$------------------------------------------------------------------------------
+$ Comments
+$ Lattice stability is taken from Unary 5.0 in this TDB.
+$                                                                         T.A. 
+$
+$------------------------------------------------------------------------------
+ ELEMENT /-   ELECTRON_GAS              0.0000E+00  0.0000E+00  0.0000E+00 !
+ ELEMENT VA   VACUUM                    0.0000E+00  0.0000E+00  0.0000E+00 !
+ ELEMENT K    BCC_A2                    3.9098E+01  7.0835E+03  6.4672E+01 !
+ ELEMENT NA   BCC_A2                    2.2990E+01  6.4475E+03  5.1447E+01 !
+
+$------------------------------------------------------------------------------
+ TYPE_DEFINITION % SEQ * !
+ DEFINE_SYSTEM_DEFAULT ELEMENT 2 !
+ DEFAULT_COMMAND DEF_SYS_ELEMENT VA /- !
+
+$ K-NA:LIQUID
+PHASE LIQUID % 1 1.0 !
+CONSTITUENT LIQUID : K,NA : !
+PARAMETER G(LIQUID,K;0) 10.0  +3.50093557E+03 -6.43888755E+01*T -2.65275085E-02*T**2 +3.08821742E-06*T**3 ; 6000 N !
+PARAMETER G(LIQUID,NA;0) 10.0  +3.06902405E+03 -5.01575219E+01*T -2.78217958E-02*T**2 +3.85960809E-06*T**3 ; 6000 N !
+PARAMETER G(LIQUID,K,NA;0) 10.0  +2.47064202E+03 +2.54356955E-01*T ; 6000 N !
+PARAMETER G(LIQUID,K,NA;1) 10.0  -2.80189617E+02 -1.41198285E+00*T ; 6000 N !
+PARAMETER G(LIQUID,K,NA;2) 10.0  +1.98087063E+02 -2.44270093E+00*T ; 6000 N !
+$ K-NA:BCC_A2
+PHASE BCC_A2 % 2 1.0 3.0 !
+CONSTITUENT BCC_A2 : K,NA : VA : !
+PARAMETER G(BCC_A2,K:VA;0) 10.0  +6.55782344E+02 -5.58922471E+01*T -2.65262987E-02*T**2 +3.08791920E-06*T**3 ; 6000 N !
+PARAMETER G(BCC_A2,NA:VA;0) 10.0  +3.29122361E+02 -4.27468894E+01*T -2.78091809E-02*T**2 +3.85650706E-06*T**3 ; 6000 N !
+PARAMETER G(BCC_A2,K,NA:VA;0) 10.0  +1.30323472E+04 -1.64735503E+01*T ; 6000 N !
+PARAMETER G(BCC_A2,K,NA:VA;1) 10.0  +6.64433657E+02 -7.81324560E+00*T ; 6000 N !
+$ K-NA:KNA2
+PHASE KNA2 % 2 0.333 0.667 !
+CONSTITUENT KNA2 : K : NA : !
+PARAMETER G(KNA2,K:NA;0) 10.0  +1.78357966E+02 -4.87606342E+01*T -2.19811000E-02*T**2 +3.20056730E-06*T**3 ; 6000 N !

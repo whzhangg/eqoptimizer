@@ -29,7 +29,7 @@ def get_chemical_system(phases: Sequence[PhaseID]) -> Set[str]:
 @dataclasses.dataclass
 class PhaseEquilibrium:
     phases: Sequence[PhaseID]
-    phase_compositions: Sequence[Mapping[str, float]] # ordered as phases
+    phase_compositions: Sequence[Mapping[str, float] | None] # ordered as phases
     temperature: float
 
 
@@ -43,10 +43,13 @@ class PhaseEquilibrium:
         s+= f': T = {self.temperature:g}, '
         parts = []
         for phase, composition in zip(self.phases, self.phase_compositions):
-            sorted_ele = sorted(list(composition.keys()))
-            p = f'{phase.name}('
-            p+= ','.join([f'x_{ele}={composition[ele]:.3f}' for ele in sorted_ele])
-            p+= ')'
+            if composition is None:
+                p = f'{phase.name}(unknown)'
+            else:
+                sorted_ele = sorted(list(composition.keys()))
+                p = f'{phase.name}('
+                p+= ','.join([f'x_{ele}={composition[ele]:.3f}' for ele in sorted_ele])
+                p+= ')'
             parts.append(p)
         
         s += ' = '.join(parts)

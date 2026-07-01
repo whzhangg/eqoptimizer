@@ -6,6 +6,7 @@ class OptimizationConfig:
     batch_size: int | None = None
     epochs: int = 1000
     lr: float = 1000.0
+    latent_mu_lr: float | None = None
     optimizer_cls: type[torch.optim.Optimizer] = torch.optim.Adam
     loss_threshold: float | None = None
     cosine_decay: bool = True

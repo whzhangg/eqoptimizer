@@ -19,7 +19,6 @@ def get_observation(
         all_data += handler.build_equilibrium_data(t)
     return all_data
 
-
 REF = 'CPDDB_RuSi.tdb'
 TO_OPT = 'initial.tdb'
 
@@ -32,17 +31,21 @@ if __name__ == "__main__":
     all_phases = {}
     for phid in phase_ids:
         all_phases[phid] = CEF.from_tdb_and_phasename(
-            TO_OPT, phid.name, correction_order=2, temperature_ref=1400
+            TO_OPT, phid.name, correction_order=2, temperature_ref=1000
         )
     system = EnsembleSystem(all_phases)
 
     # step 2. get data
-    eqilibrium = get_observation(REF, temp=[400, 700, 1000, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000,2200])
+    eqilibrium = get_observation(
+        REF, 
+        temp=[400, 700, 1000, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000, 2200]
+    )
 
     # step 3. define configuration
     config = OptimizationConfig(
         epochs=500,
-        lr=200, cosine_decay=True, regularization_weight=1.0e-13
+        lr=150, latent_mu_lr=150, cosine_decay=True, regularization_weight=1.0e-10,
+        unstable_huber_beta=2.5,
     )
 
     # step 4. optimize
@@ -50,6 +53,7 @@ if __name__ == "__main__":
         system,
         config,
         equilibria=eqilibrium,
+        record_every=10
     )
 
     for phase_id in optimized_system.phase_ids:

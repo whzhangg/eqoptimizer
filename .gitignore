@@ -5,6 +5,7 @@ examples/**/*.pkl
 examples/**/*.png
 examples/**/checkpoint/
 examples/**/figures/
+examples/trash
 misc
 **/__pycache__
 src/*.py
