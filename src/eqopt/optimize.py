@@ -1,6 +1,5 @@
 import dataclasses
 from typing import Sequence
-import itertools
 import math
 from pathlib import Path
 import time
@@ -69,13 +68,15 @@ def _regularization_loss(
     return total
 
 
-def _collect_trainable_parameters(
-    system: ThermodynamicSystem,
-    equilibrium_losses: torch.nn.ModuleList,
+def _deduplicate_trainable_parameters(
+    parameters_iterable,
+    seen_ids: set[int] | None = None,
 ) -> list[torch.nn.Parameter]:
+    """collect all unique training parameters from a list"""
     parameters = []
-    seen_ids = set()
-    for parameter in itertools.chain(system.parameters(), equilibrium_losses.parameters()):
+    if seen_ids is None:
+        seen_ids = set()
+    for parameter in parameters_iterable:
         if not parameter.requires_grad:
             continue
         parameter_id = id(parameter)
@@ -86,10 +87,28 @@ def _collect_trainable_parameters(
     return parameters
 
 
+def _collect_trainable_model_parameters(
+    system: ThermodynamicSystem,
+) -> list[torch.nn.Parameter]:
+    return _deduplicate_trainable_parameters(system.parameters())
+
+
+def _collect_trainable_latent_mu_parameters(
+    equilibrium_losses: torch.nn.ModuleList,
+) -> list[torch.nn.Parameter]:
+    return _deduplicate_trainable_parameters(equilibrium_losses.parameters())
+
+
 def _save_equilibrium_states_without_runtime_data(
     equilibrium_states: Sequence[PhaseEquilibriumOptState],
     path: str | Path,
 ) -> None:
+    """
+    runtime data are caches managed by the thermodynamic models.
+
+    when saving the equilibrium state, they are not saved by setting
+    them to None
+    """
     runtime_data_by_index = [
         getattr(eq_state, "runtime_data", None)
         for eq_state in equilibrium_states
@@ -105,29 +124,6 @@ def _save_equilibrium_states_without_runtime_data(
             strict=True,
         ):
             eq_state.runtime_data = runtime_data
-
-
-def _project_equilibrium_compositions(
-    system: ThermodynamicSystem,
-    equilibria: Sequence[PhaseEquilibrium],
-    *,
-    tol: float,
-) -> tuple[PhaseEquilibrium, ...]:
-    return tuple(
-        PhaseEquilibrium(
-            phases=equilibrium.phases,
-            phase_compositions=tuple(
-                system.project_composition(phase, composition, tol=tol)
-                for phase, composition in zip(
-                    equilibrium.phases,
-                    equilibrium.phase_compositions,
-                    strict=True,
-                )
-            ),
-            temperature=equilibrium.temperature,
-        )
-        for equilibrium in equilibria
-    )
 
 
 def _aggregate_loss_parts(
@@ -219,8 +215,10 @@ def _normalize_history(history: object) -> dict[str, list[float | int]]:
 class OptimizationState:
     config: OptimizationConfig | None = None
     parameter0: dict[str, torch.Tensor] | None = None
-    torch_optimizer_state: dict[str, object] | None = None
-    scheduler_state: dict[str, object] | None = None
+    model_optimizer_state: dict[str, object] | None = None
+    mu_optimizer_state: dict[str, object] | None = None
+    model_scheduler_state: dict[str, object] | None = None
+    mu_scheduler_state: dict[str, object] | None = None
     history: dict[str, list[float | int]] = dataclasses.field(
         default_factory=_empty_history
     )
@@ -248,8 +246,10 @@ class OptimizationState:
     def state_dict(self) -> dict[str, object]:
         return {
             "config": self.config,
-            "torch_optimizer_state": self.torch_optimizer_state,
-            "scheduler_state": self.scheduler_state,
+            "model_optimizer_state": self.model_optimizer_state,
+            "mu_optimizer_state": self.mu_optimizer_state,
+            "model_scheduler_state": self.model_scheduler_state,
+            "mu_scheduler_state": self.mu_scheduler_state,
             "history": {
                 key: list(value)
                 for key, value in self.history.items()
@@ -267,8 +267,10 @@ class OptimizationState:
         if isinstance(config, dict):
             config = OptimizationConfig.from_state_dict({"config": config})
         self.config = config
-        self.torch_optimizer_state = state_dict.get("torch_optimizer_state")
-        self.scheduler_state = state_dict.get("scheduler_state")
+        self.model_optimizer_state = state_dict.get("model_optimizer_state")
+        self.mu_optimizer_state = state_dict.get("mu_optimizer_state")
+        self.model_scheduler_state = state_dict.get("model_scheduler_state")
+        self.mu_scheduler_state = state_dict.get("mu_scheduler_state")
         self.history = _normalize_history(state_dict.get("history", {}))
         self.epoch = int(state_dict.get("epoch", 0))
         self.best_loss = float(state_dict.get("best_loss", math.inf))
@@ -300,11 +302,23 @@ class OptimizationState:
 
     def update_from_runtime(
         self,
-        optimizer: torch.optim.Optimizer,
-        scheduler,
+        model_optimizer: torch.optim.Optimizer | None,
+        mu_optimizer: torch.optim.Optimizer | None,
+        model_scheduler,
+        mu_scheduler,
     ) -> None:
-        self.torch_optimizer_state = optimizer.state_dict()
-        self.scheduler_state = None if scheduler is None else scheduler.state_dict()
+        self.model_optimizer_state = (
+            None if model_optimizer is None else model_optimizer.state_dict()
+        )
+        self.mu_optimizer_state = (
+            None if mu_optimizer is None else mu_optimizer.state_dict()
+        )
+        self.model_scheduler_state = (
+            None if model_scheduler is None else model_scheduler.state_dict()
+        )
+        self.mu_scheduler_state = (
+            None if mu_scheduler is None else mu_scheduler.state_dict()
+        )
 
 
     def record_history(
@@ -341,17 +355,25 @@ class OptimizationState:
         return state
 
 
-def _build_torch_optimizer(
+def _build_model_optimizer(
     system: ThermodynamicSystem,
+    config: OptimizationConfig,
+) -> torch.optim.Optimizer | None:
+    parameters = _collect_trainable_model_parameters(system)
+    if not parameters:
+        return None
+    return config.optimizer_cls(parameters, lr=config.lr)
+
+
+def _build_mu_optimizer(
     equilibrium_states: torch.nn.ModuleList,
     config: OptimizationConfig,
-) -> torch.optim.Optimizer:
-    parameters = _collect_trainable_parameters(system, equilibrium_states)
+) -> torch.optim.Optimizer | None:
+    parameters = _collect_trainable_latent_mu_parameters(equilibrium_states)
     if not parameters:
-        raise ValueError(
-            "No trainable parameters found in the supplied system/equilibria."
-        )
-    return config.optimizer_cls(parameters, lr=config.lr)
+        return None
+    lr = config.lr if config.latent_mu_lr is None else config.latent_mu_lr
+    return config.optimizer_cls(parameters, lr=lr)
 
 
 def _build_scheduler(
@@ -419,16 +441,11 @@ def optimize_thermodynamic_parameters(
     if isinstance(optimization_state, (str, Path)):
         state = OptimizationState.from_file(optimization_state)
     elif optimization_state is None:
-        if config is None and opt_state_path is not None and opt_state_path.exists():
-            state = OptimizationState.from_file(opt_state_path)
-            using_existing_state = True
-            console.print(f"loaded optimization state from {opt_state_path}")
-        elif config is None:
+        if config is None:
             raise ValueError(
-                "config is required when no optimization_state is supplied."
+                "Either config or optimization_state must be supplied."
             )
-        else:
-            state = OptimizationState.create(system, config)
+        state = OptimizationState.create(system, config)
     else:
         state = optimization_state
 
@@ -451,28 +468,33 @@ def optimize_thermodynamic_parameters(
             map_location=DEFAULT_DEVICE,
             weights_only=False,
         )
-    elif (
-        equilibrium_states is None
-        and equilibria is None
-        and last_eqstate_path is not None
-        and last_eqstate_path.exists()
-    ):
-        equilibrium_states = torch.load(
-            last_eqstate_path,
-            map_location=DEFAULT_DEVICE,
-            weights_only=False,
-        )
-        console.print(f"loaded equilibrium states from {last_eqstate_path}")
     elif equilibrium_states is None and equilibria is not None:
         console.print(
             'Creating optimization state of phase equilibrium, projecting compositions...',
             end=''
         )
-        equilibria = _project_equilibrium_compositions(
-            system,
-            equilibria,
-            tol=config.composition_projection_tol,
+        # we build phase equilibria again with projected composition
+        equilibria = tuple(
+            PhaseEquilibrium(
+                phases=equilibrium.phases,
+                phase_compositions=tuple(
+                    (
+                        None
+                        if composition is None
+                        else system.project_composition(
+                            phase, composition, tol=config.composition_projection_tol)
+                    )
+                    for phase, composition in zip(
+                        equilibrium.phases,
+                        equilibrium.phase_compositions,
+                        strict=True,
+                    )
+                ),
+                temperature=equilibrium.temperature,
+            )
+            for equilibrium in equilibria
         )
+
         console.print('DONE!')
         equilibrium_states = tuple(
             PhaseEquilibriumOptState(eq, mu_strategy=config.mu_strategy)
@@ -494,7 +516,7 @@ def optimize_thermodynamic_parameters(
             )
     elif equilibrium_states is None:
         raise ValueError(
-            "Either equilibria or equilibrium_states is required to optimize."
+            "Either equilibria or equilibrium_states must be supplied."
         )
 
     if not isinstance(equilibrium_states, torch.nn.ModuleList):
@@ -521,7 +543,12 @@ def optimize_thermodynamic_parameters(
     console.print(f"epochs = {config.epochs}")
     if config.loss_threshold is not None:
         console.print(f"loss threshold = {config.loss_threshold}")
-    console.print(f"lr = {config.lr}")
+    console.print(f"model lr = {config.lr}")
+    console.print(
+        "latent mu lr = "
+        f"{config.lr if config.latent_mu_lr is None else config.latent_mu_lr}"
+    )
+    console.print("optimization mode = joint update")
     if config.cosine_decay:
         console.print(
             f"lr schedule = cosine decay to {config.min_lr_factor:g} * lr"
@@ -558,16 +585,38 @@ def optimize_thermodynamic_parameters(
     )
     console.print(f"{'latent mu':<24s} ({latent_mu_parameters:d} parameters)")
 
-    optimizer = _build_torch_optimizer(system, equilibrium_states, config)
-    if state.torch_optimizer_state is not None:
-        optimizer.load_state_dict(state.torch_optimizer_state)
-        console.print(
-            f"loaded optimizer state at epoch {state.epoch}"
+    model_optimizer = _build_model_optimizer(system, config)
+    mu_optimizer = _build_mu_optimizer(equilibrium_states, config)
+    if model_optimizer is None and mu_optimizer is None:
+        raise ValueError(
+            "No trainable parameters found in the supplied system/equilibria."
         )
 
-    scheduler = _build_scheduler(optimizer, config, total_steps)
-    if scheduler is not None and state.scheduler_state is not None:
-        scheduler.load_state_dict(state.scheduler_state)
+    if model_optimizer is not None and state.model_optimizer_state is not None:
+        model_optimizer.load_state_dict(state.model_optimizer_state)
+        console.print(
+            f"loaded model optimizer state at epoch {state.epoch}"
+        )
+    if mu_optimizer is not None and state.mu_optimizer_state is not None:
+        mu_optimizer.load_state_dict(state.mu_optimizer_state)
+        console.print(
+            f"loaded latent mu optimizer state at epoch {state.epoch}"
+        )
+
+    model_scheduler = (
+        None
+        if model_optimizer is None
+        else _build_scheduler(model_optimizer, config, total_steps)
+    )
+    mu_scheduler = (
+        None
+        if mu_optimizer is None
+        else _build_scheduler(mu_optimizer, config, total_steps)
+    )
+    if model_scheduler is not None and state.model_scheduler_state is not None:
+        model_scheduler.load_state_dict(state.model_scheduler_state)
+    if mu_scheduler is not None and state.mu_scheduler_state is not None:
+        mu_scheduler.load_state_dict(state.mu_scheduler_state)
 
     all_indices = list(range(n_equilibria))
 
@@ -590,7 +639,12 @@ def optimize_thermodynamic_parameters(
     if not math.isfinite(state.best_loss):
         state.best_loss = float(entry_loss_parts["total"].detach().cpu())
     if checkpoint_path is not None and state.epoch == 0:
-        state.update_from_runtime(optimizer, scheduler)
+        state.update_from_runtime(
+            model_optimizer,
+            mu_optimizer,
+            model_scheduler,
+            mu_scheduler,
+        )
         torch.save(system, best_model_path)
         torch.save(system, last_model_path)
         _save_equilibrium_states_without_runtime_data(
@@ -623,7 +677,10 @@ def optimize_thermodynamic_parameters(
             ]
 
         for batch_indices in batches:
-            optimizer.zero_grad(set_to_none=True)
+            if model_optimizer is not None:
+                model_optimizer.zero_grad(set_to_none=True)
+            if mu_optimizer is not None:
+                mu_optimizer.zero_grad(set_to_none=True)
 
             loss_parts = _aggregate_loss_parts(
                 equilibrium_states,
@@ -635,11 +692,15 @@ def optimize_thermodynamic_parameters(
                 regularization_weight=config.regularization_weight,
                 parameter0=state.parameter0,
             )
-            total_loss = loss_parts["total"]
-            total_loss.backward()
-            optimizer.step()
-            if scheduler is not None:
-                scheduler.step()
+            loss_parts["total"].backward()
+            if model_optimizer is not None:
+                model_optimizer.step()
+                if model_scheduler is not None:
+                    model_scheduler.step()
+            if mu_optimizer is not None:
+                mu_optimizer.step()
+                if mu_scheduler is not None:
+                    mu_scheduler.step()
 
         should_record = (
             epoch == 1
@@ -665,11 +726,19 @@ def optimize_thermodynamic_parameters(
             stable_loss = state.history["stable_loss"][-1]
             unstable_loss = state.history["unstable_loss"][-1]
             regularization_loss = state.history["regularization_loss"][-1]
-            current_lr = optimizer.param_groups[0]["lr"]
+            current_lrs = {}
+            if model_optimizer is not None:
+                current_lrs["model"] = model_optimizer.param_groups[0]["lr"]
+            if mu_optimizer is not None:
+                current_lrs["latent_mu"] = mu_optimizer.param_groups[0]["lr"]
+            current_lr_text = ", ".join(
+                f"{name}={lr:10.2e}"
+                for name, lr in current_lrs.items()
+            )
             t1 = time.time()
             console.print(
                 f"epoch {epoch:>4d}/{config.epochs}, "
-                f"lr={current_lr:10.2e}, "
+                f"lr=({current_lr_text}), "
                 f"loss={epoch_loss:10.2e}, "
                 f"stable={stable_loss:10.2e}, "
                 f"unstable={unstable_loss:10.2e}, "
@@ -692,7 +761,12 @@ def optimize_thermodynamic_parameters(
 
             if checkpoint_path is not None and epoch_loss < state.best_loss:
                 state.best_loss = epoch_loss
-                state.update_from_runtime(optimizer, scheduler)
+                state.update_from_runtime(
+                    model_optimizer,
+                    mu_optimizer,
+                    model_scheduler,
+                    mu_scheduler,
+                )
                 torch.save(system, best_model_path)
                 _save_equilibrium_states_without_runtime_data(
                     equilibrium_states,
@@ -701,7 +775,12 @@ def optimize_thermodynamic_parameters(
                 state.save(opt_state_path)
 
             if checkpoint_path is not None:
-                state.update_from_runtime(optimizer, scheduler)
+                state.update_from_runtime(
+                    model_optimizer,
+                    mu_optimizer,
+                    model_scheduler,
+                    mu_scheduler,
+                )
                 torch.save(system, last_model_path)
                 _save_equilibrium_states_without_runtime_data(
                     equilibrium_states,
@@ -726,7 +805,12 @@ def optimize_thermodynamic_parameters(
     final_loss = float(state.final_loss_parts["total"].detach().cpu())
     
     if checkpoint_path is not None:
-        state.update_from_runtime(optimizer, scheduler)
+        state.update_from_runtime(
+            model_optimizer,
+            mu_optimizer,
+            model_scheduler,
+            mu_scheduler,
+        )
         torch.save(system, last_model_path)
         _save_equilibrium_states_without_runtime_data(
             equilibrium_states,
@@ -739,7 +823,12 @@ def optimize_thermodynamic_parameters(
     
     if checkpoint_path is not None and final_loss < state.best_loss:
         state.best_loss = final_loss
-        state.update_from_runtime(optimizer, scheduler)
+        state.update_from_runtime(
+            model_optimizer,
+            mu_optimizer,
+            model_scheduler,
+            mu_scheduler,
+        )
         torch.save(system, best_model_path)
         _save_equilibrium_states_without_runtime_data(
             equilibrium_states,

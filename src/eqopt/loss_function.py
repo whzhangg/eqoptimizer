@@ -75,10 +75,33 @@ class PhaseEquilibriumOptState(torch.nn.Module):
         self.elements = tuple(sorted(equilibrium.chemical_system))
         self.stable_phase_ids = set(self.equilibrium.phases)
 
-        self.x_matrix = torch.stack(
-            [_composition_tensor(composition, self.elements) 
-            for composition in self.equilibrium.phase_compositions], dim=0
+        # we separate phases with known composition, which can be used
+        # to partly define the chemical potential
+        self.known_phase_indices = tuple(
+            index
+            for index, composition in enumerate(self.equilibrium.phase_compositions)
+            if composition is not None
         )
+
+        known_compositions = [
+            self.equilibrium.phase_compositions[index]
+            for index in self.known_phase_indices
+        ]
+        if known_compositions:
+            self.x_matrix = torch.stack(
+                [
+                    _composition_tensor(composition, self.elements)
+                    for composition in known_compositions
+                    if composition is not None
+                ],
+                dim=0,
+            )
+        else:
+            self.x_matrix = torch.empty(
+                (0, len(self.elements)),
+                device=DEFAULT_DEVICE,
+                dtype=DEFAULT_TYPE,
+            )
         self.x_rank = _matrix_rank(self.x_matrix)
         self.strategy = self._select_mu_strategy(mu_strategy)
         if self.strategy == "latent":
@@ -174,11 +197,9 @@ class PhaseEquilibriumOptState(torch.nn.Module):
 
     def _stable_gibbs_vector(self, system: ThermodynamicSystem) -> torch.Tensor:
         values = []
-        for phase, composition in zip(
-            self.equilibrium.phases,
-            self.equilibrium.phase_compositions,
-            strict=True,
-        ):
+        for index in self.known_phase_indices:
+            phase = self.equilibrium.phases[index]
+            composition = self.equilibrium.phase_compositions[index]
             values.append(
                 system.get_gibbs_energy(
                     phase,
@@ -187,6 +208,8 @@ class PhaseEquilibriumOptState(torch.nn.Module):
                     self.get_runtime_data(),
                 ).reshape(())
             )
+        if not values:
+            return torch.empty(0, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
         return torch.stack(values)
 
 
@@ -414,7 +437,10 @@ def phase_equilibrium_loss_parts(
         phi_by_id[phase]
         for phase in state.equilibrium.phases
     ]
-    phi_all = list(phi_by_id.values())
+    #phi_all = list(phi_by_id.values())
+    phi_all = [
+        phi_by_id[phase] for phase in phi_by_id.keys() if phase not in state.equilibrium.phases
+    ] # all unstable phases
 
     stable_total = torch.zeros((), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
     if phi_observed:
