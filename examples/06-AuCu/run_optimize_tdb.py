@@ -143,7 +143,7 @@ def optimize():
         PhaseID(name='AU3CU', elements=['AU','CU']): au3cu
     }
     system = EnsembleSystem(all_phases)
-    eqilibrium = get_observation(REF, temp=[200, 400, 500, 550, 600, 650])
+    eqilibrium = get_observation(REF, temp=[300, 400, 500, 550, 600, 650])
     
     # step 3. define configuration
     config = OptimizationConfig(
