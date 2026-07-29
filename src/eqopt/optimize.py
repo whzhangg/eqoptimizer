@@ -501,6 +501,7 @@ def optimize_thermodynamic_parameters(
             for eq in equilibria
         )
         console.rule('we initialize states of equilibria with auxiliary chemical potential')
+        system.prepare_for_loss()
         for eq_state in equilibrium_states:
             eq_state.initial_mu_by_minimization(
                 system,
@@ -622,6 +623,7 @@ def optimize_thermodynamic_parameters(
 
     # Compute the loss at function entry. Preserve an existing initial loss when
     # continuing a run, so restart reports the original starting point.
+    system.prepare_for_loss()
     with torch.no_grad():
         entry_loss_parts = _aggregate_loss_parts(
             equilibrium_states,
@@ -682,6 +684,7 @@ def optimize_thermodynamic_parameters(
             if mu_optimizer is not None:
                 mu_optimizer.zero_grad(set_to_none=True)
 
+            system.prepare_for_loss()
             loss_parts = _aggregate_loss_parts(
                 equilibrium_states,
                 batch_indices,
@@ -709,6 +712,7 @@ def optimize_thermodynamic_parameters(
         )
 
         if should_record:
+            system.prepare_for_loss()
             with torch.no_grad():
                 epoch_loss_parts = _aggregate_loss_parts(
                     equilibrium_states,
@@ -791,6 +795,7 @@ def optimize_thermodynamic_parameters(
         if should_stop:
             break
 
+    system.prepare_for_loss()
     with torch.no_grad():
         state.final_loss_parts = _aggregate_loss_parts(
             equilibrium_states,

@@ -40,6 +40,11 @@ class ThermodynamicSystem(nn.Module, ABC):
         """return a valid composition if it is within tolerance from feasible ones"""
         return self.project_composition_for_phase(phase_id, comp, tol=tol)
 
+
+    def prepare_for_loss(self) -> None:
+        """Prepare system state before a fresh loss evaluation."""
+        return None
+
     
     def forward(
         self,

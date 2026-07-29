@@ -3,7 +3,13 @@ experimental
 examples/**/*.ipynb
 examples/**/*.pkl
 examples/**/*.png
-examples/**/checkpoint/
+examples/**/checkpoint_optimized/
+
+examples/06-AuCu/results/checkpoint*
+examples/06-AuCu/results/*.py
+examples/06-AuCu/results/*.pt
+examples/06-AuCu/resources/*.py
+
 examples/**/figures/
 examples/trash
 misc

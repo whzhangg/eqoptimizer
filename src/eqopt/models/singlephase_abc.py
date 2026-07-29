@@ -18,6 +18,11 @@ class ThermodynamicModel(nn.Module, ABC):
         return None
 
 
+    def prepare_for_loss(self) -> None:
+        """Prepare model state before a fresh loss evaluation."""
+        return None
+
+
     def project_composition(
         self,
         comp: Mapping[str, float],

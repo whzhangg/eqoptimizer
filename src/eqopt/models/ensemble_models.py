@@ -34,6 +34,11 @@ class EnsembleSystem(ThermodynamicSystem):
         return self.key_to_model[self._get_phase_key(phase_id)]
 
 
+    def prepare_for_loss(self) -> None:
+        for model in self.key_to_model.values():
+            model.prepare_for_loss()
+
+
     def _get_phase_key(self, phase_id: PhaseID) -> str:
         try:
             return self._phase_id_to_key[phase_id]
