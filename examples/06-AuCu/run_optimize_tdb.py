@@ -14,7 +14,8 @@ PROJECT_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(THIS_DIR))
 
-from eam_opt.calc import TorchEAMFSCalculator
+from potentials.calc import TorchPotentialCalculator
+from potentials.eam.model import EAM
 from eam_opt.utilities import relax_structure
 from eam_opt.models import CompPhase, SolutionPhase
 from eqopt.tdb_reference import TDBHandler
@@ -27,7 +28,7 @@ from eqopt.models import EnsembleSystem
 def relaxed_comp_phase(
     phase_name: str,
     structure_path: Path,
-    calculator: TorchEAMFSCalculator,
+    calculator: TorchPotentialCalculator,
     *,
     hydro: bool,
     elements: tuple[str, ...] | None = None,
@@ -49,7 +50,8 @@ def relaxed_comp_phase(
 
 
 def build_models() -> tuple[SolutionPhase, CompPhase, CompPhase, CompPhase]:
-    calculator = TorchEAMFSCalculator(str(THIS_DIR / "resources" / "CuAu_fitted.eam.fs"))
+    eam = EAM(str(THIS_DIR / "resources" / "CuAu_fitted.eam.fs"))
+    calculator = TorchPotentialCalculator(eam)
     structure_dir = THIS_DIR / "resources"
     elements = ("AU", "CU")
 
@@ -160,7 +162,7 @@ def optimize():
         system,
         config,
         equilibria=eqilibrium,
-        checkpoint_dir='results/checkpoint_tdb'
+        checkpoint_dir='checkpoint_tdb_tmp'
     )
     for phase_id in optimized_system.phase_ids:
         print(f'$ {phase_id}')

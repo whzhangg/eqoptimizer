@@ -13,7 +13,7 @@ import numpy as np
 
 
 @dataclass(frozen=True)
-class EAMFSPotential:
+class EAMFSData:
     """Tabulated EAM/FS potential data.
 
     Attributes
@@ -56,7 +56,7 @@ class EAMFSPotential:
         return np.arange(self.nr, dtype=float) * self.dr
 
 
-def read_eam_fs(filename: str | Path) -> EAMFSPotential:
+def read_eam_fs(filename: str | Path) -> EAMFSData:
     """Read a LAMMPS/DYNAMO ``eam/fs`` potential file."""
 
     path = Path(filename)
@@ -114,7 +114,7 @@ def read_eam_fs(filename: str | Path) -> EAMFSPotential:
         if trailing:
             raise ValueError(f"{path} has {len(trailing)} unexpected trailing values")
 
-    return EAMFSPotential(
+    return EAMFSData(
         comments=comments,
         symbols=symbols,
         atomic_numbers=atomic_numbers,

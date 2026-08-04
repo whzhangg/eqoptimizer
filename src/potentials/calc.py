@@ -1,8 +1,7 @@
-"""ASE calculator wrapper for the torch EAM/FS module."""
+"""ASE calculator for torch-based atomistic potentials."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -10,12 +9,11 @@ import torch
 from ase.calculators.calculator import Calculator, all_changes
 from ase.neighborlist import neighbor_list
 
-from .eam import EAMFSModule
-from .phraser import EAMFSPotential
+from .potential_abc import TorchPotential
 
 
-class TorchEAMFSCalculator(Calculator):
-    """ASE calculator for LAMMPS/DYNAMO ``eam/fs`` potentials.
+class TorchPotentialCalculator(Calculator):
+    """ASE calculator backed by a ``TorchPotential``.
 
     Forces are computed as ``-dE / d(displacement)`` and stress is computed as
     ``dE / d(strain) / volume`` from zero-valued differentiable tensors.
@@ -25,21 +23,13 @@ class TorchEAMFSCalculator(Calculator):
 
     def __init__(
         self,
-        potential: str | Path | EAMFSPotential | EAMFSModule,
-        *,
-        dtype: torch.dtype = torch.float64,
-        device: str | torch.device = "cpu",
+        potential: TorchPotential,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.model = (
-            potential
-            if isinstance(potential, EAMFSModule)
-            else EAMFSModule(potential, dtype=dtype, device=device)
-        )
+        self.model = potential
         self.dtype = self.model.dtype
         self.device = self.model.device
-        self.potential = self.model.potential
 
     def calculate(
         self,

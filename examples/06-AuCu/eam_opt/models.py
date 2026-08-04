@@ -15,8 +15,8 @@ from eqopt.models.shared import get_tensor_mu, normalize_and_order_composition
 from eqopt.models.singlephase_abc import ThermodynamicModel
 from eqopt.utilities import R
 
-from .calc import TorchEAMFSCalculator
-from .eam import EAMFSModule
+from potentials.calc import TorchPotentialCalculator
+from potentials.eam.model import EAM
 from .utilities import get_composition_for_ase_atoms
 from ase.filters import FrechetCellFilter
 from ase.optimize import GoodOldQuasiNewton
@@ -154,7 +154,7 @@ class EAMCompPhase(ThermodynamicModel):
         self,
         phase_name: str,
         atoms: Atoms,
-        eam_model: EAMFSModule,
+        eam_model: EAM,
         *,
         composition: Mapping[str, float] | None = None,
         elements: Sequence[str] | None = None,
@@ -168,7 +168,7 @@ class EAMCompPhase(ThermodynamicModel):
         elements = tuple(sorted(composition if elements is None else elements))
         super().__init__(phase_name, elements)
         self.eam_model = eam_model
-        self.calculator = TorchEAMFSCalculator(self.eam_model)
+        self.calculator = TorchPotentialCalculator(self.eam_model)
         self.initial_atoms = atoms.copy()
         self.relaxed_atoms = atoms.copy()
         self.initial_atoms.pbc = True

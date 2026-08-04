@@ -9,14 +9,15 @@ import numpy as np
 import torch
 from torch import nn
 
-from .phraser import EAMFSPotential, read_eam_fs
+from ..potential_abc import TorchPotential
+from .phraser import EAMFSData, read_eam_fs
 
 
-class EAMFSModule(nn.Module):
+class EAM(TorchPotential):
     """Torch module evaluating a LAMMPS/DYNAMO ``eam/fs`` potential."""
     def __init__(
         self,
-        potential: str | Path | EAMFSPotential,
+        potential: str | Path | EAMFSData,
         *,
         dtype: torch.dtype = torch.float64,
         device: str | torch.device = "cpu",
@@ -141,7 +142,7 @@ class FineTunedEAMConfig:
 
 
 
-class FineTunedEAM(EAMFSModule):
+class FineTunedEAM(EAM):
     """EAM/FS module with trainable radial corrections.
 
     The baseline embedding, density, and pair tables are read directly from the
@@ -152,7 +153,7 @@ class FineTunedEAM(EAMFSModule):
 
     def __init__(
         self,
-        potential: str | Path | EAMFSPotential,
+        potential: str | Path | EAMFSData,
         *,
         config: FineTunedEAMConfig | None = None,
         pair_mask: torch.Tensor | np.ndarray | None = None,
@@ -310,7 +311,7 @@ class FineTunedEAM(EAMFSModule):
         """Return the corrected raw density table.
 
         The returned tensor has shape ``(target, source, r_grid)`` and is in the
-        same convention as :class:`EAMFSPotential.density`.
+        same convention as :class:`EAMFSData.density`.
         """
 
         r_grid = torch.as_tensor(
@@ -349,10 +350,10 @@ class FineTunedEAM(EAMFSModule):
         corrected = rphi + correction_rphi
         return 0.5 * (corrected + corrected.transpose(0, 1))
 
-    def to_eam_fs_potential(self) -> EAMFSPotential:
-        """Materialize the current corrected model as an ``EAMFSPotential``."""
+    def to_eam_fs_potential(self) -> EAMFSData:
+        """Materialize the current corrected model as an ``EAMFSData``."""
 
-        return EAMFSPotential(
+        return EAMFSData(
             comments=self.potential.comments,
             symbols=self.potential.symbols,
             atomic_numbers=np.array(self.potential.atomic_numbers, copy=True),

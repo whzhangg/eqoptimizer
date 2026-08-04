@@ -12,14 +12,13 @@ PROJECT_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(THIS_DIR))
 
-from eam_opt.calc import TorchEAMFSCalculator
+from potentials.eam.model import FineTunedEAM, FineTunedEAMConfig
 from eam_opt.utilities import relax_structure
 from eam_opt.models import CompPhase, SolutionPhase, EAMCompPhase
 from eqopt.tdb_reference import TDBHandler
 from eqopt.loss_function import PhaseEquilibrium
 from eqopt.optimize import OptimizationConfig
 from eqopt.models import EnsembleSystem
-from eam_opt.eam import FineTunedEAM, FineTunedEAMConfig
 
 
 def build_models(eam_model) -> tuple[SolutionPhase, CompPhase, CompPhase, CompPhase]:
@@ -92,13 +91,13 @@ def optimize():
         system,
         config,
         equilibria=eqilibrium,
-        checkpoint_dir='results/checkpoint_eam'
+        checkpoint_dir='checkpoint_tmp'
     )
     for phase_id in optimized_system.phase_ids:
         print(f'$ {phase_id}')
         print(optimized_system.get_model_by_phase_id(phase_id).get_tdb_str())
 
-    torch.save(eam, 'results/optimized_eam.pt')
+    #torch.save(eam, 'results/optimized_eam.pt')
     
 if __name__ == "__main__":
     optimize()
