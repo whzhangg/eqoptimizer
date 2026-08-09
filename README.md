@@ -65,3 +65,7 @@ This package is under development, and currently:
 ## Citation
 
 Zhang, W., Crivello, J.-C., Matsuoka, Y., Koyama, T. & Abe, T. Machine Learning Compatible CALPHAD-type Optimization from Phase Equilibria by Auto-differentiation. Preprint at https://doi.org/10.48550/ARXIV.2608.00516 (2026).
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE.txt) for details.
