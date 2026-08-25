@@ -142,3 +142,47 @@ def _read_float_block(handle, count: int, path: Path) -> np.ndarray:
     if len(values) != count:
         raise ValueError(f"{path} has too many values in a fixed-size table block")
     return np.asarray(values, dtype=float)
+
+
+def write_eam_fs_potential(path: str | Path, potential: EAMFSData) -> Path:
+    """Write an ``EAMFSData`` object to a LAMMPS setfl/eam.fs file."""
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for comment in potential.comments:
+            handle.write(f"{comment}\n")
+        handle.write(
+            f"{len(potential.symbols):5d}     {' '.join(potential.symbols)}\n"
+        )
+        handle.write(
+            f"{potential.nrho:5d} {potential.drho:24.16e} "
+            f"{potential.nr:5d} {potential.dr:24.16e} "
+            f"{potential.cutoff:24.16e}\n"
+        )
+        for source, symbol in enumerate(potential.symbols):
+            handle.write(
+                f"{int(potential.atomic_numbers[source]):5d} "
+                f"{float(potential.masses[source]):14.6f} "
+                f"{float(potential.lattice_constants[source]):18.10f} "
+                f"   {potential.lattice_types[source]}\n"
+            )
+            _write_float_block(handle, potential.embedding[source])
+            for target in range(len(potential.symbols)):
+                _write_float_block(handle, potential.density[target, source])
+        for i in range(len(potential.symbols)):
+            for j in range(i + 1):
+                _write_float_block(handle, potential.rphi[i, j])
+    return path
+
+
+def _write_float_block(handle, values: np.ndarray, values_per_line: int = 5) -> None:
+    flat = np.asarray(values, dtype=float).reshape(-1)
+    for start in range(0, flat.size, values_per_line):
+        handle.write(
+            "".join(
+                f"{value:24.16e}"
+                for value in flat[start : start + values_per_line]
+            )
+            + "\n"
+        )
