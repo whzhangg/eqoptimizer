@@ -74,7 +74,7 @@ def optimize():
         PhaseID(name='AU3CU', elements=['AU','CU']): au3cu
     }
     system = EnsembleSystem(all_phases)
-    eqilibrium = get_observation(REF, temp=[300, 400, 500, 550, 600, 650])
+    eqilibrium = get_observation(REF, temp=[300, 400, 450, 500, 550, 600, 650])
     
     # step 3. define configuration
     config = OptimizationConfig(
@@ -97,7 +97,7 @@ def optimize():
         print(f'$ {phase_id}')
         print(optimized_system.get_model_by_phase_id(phase_id).get_tdb_str())
 
-    #torch.save(eam, 'results/optimized_eam.pt')
+    torch.save(eam, 'optimized_eam.pt')
     
 if __name__ == "__main__":
     optimize()
