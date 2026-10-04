@@ -42,8 +42,9 @@ if __name__ == "__main__":
     # step 3. define configuration
     config = OptimizationConfig(
         epochs=1000,
-        lr=100, 
-        cosine_decay=False,
+        lr=200, 
+        cosine_decay=True,
+        min_lr_factor=0.2,
         scale_energy_by_rt=False,
         use_huber_for_stable_phases=True, 
         regularization_weight=1e-12
