@@ -1,6 +1,6 @@
 TODO.md
 AGENTS.md
-experimental
+experimental*
 examples/**/*.ipynb
 examples/**/*.pkl
 examples/**/*.png
@@ -10,6 +10,7 @@ examples/06-AuCu/results/checkpoint*
 examples/06-AuCu/results/*.py
 examples/06-AuCu/results/*.pt
 examples/06-AuCu/resources/*.py
+examples/06-AuCu/previous
 
 examples/**/figures/
 examples/trash
