@@ -11,6 +11,7 @@ from .cef_terms import (
     TernaryExcessTerm,
 )
 from .cef_parser import (
+    SymbolicCEFParser,
     get_cef_context_and_contributions_from_tdb_string,
     get_cef_context_from_tdb_string,
     get_cef_surface_from_tdb_string,
@@ -34,6 +35,7 @@ __all__ = [
     "CEFContribution",
     "CEFSurface",
     "CEFMagneticContribution",
+    "SymbolicCEFParser",
     "EndMemberTerm",
     "get_cef_context_and_contributions_from_tdb_string",
     "get_cef_context_from_tdb_string",

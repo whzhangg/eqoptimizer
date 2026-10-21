@@ -261,7 +261,12 @@ class TempPolynomialwCorrection(TemperatureExpression):
 
 
 class ParameterizedExpression(TemperatureExpression):
-    """Restricted symbolic expression with trainable symbols other than ``T``."""
+    """Restricted symbolic expression with trainable symbols other than ``T``.
+
+    exp, log and ln are supported along with polynomial expressions.
+    any parameter other than T will be treated as parameters, assumed to
+    have the same scale. 
+    """
 
     _runtime_symbol = sympy.Symbol("T")
     _allowed_functions = {sympy.exp, sympy.log}

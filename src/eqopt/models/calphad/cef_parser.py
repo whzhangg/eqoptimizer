@@ -1,5 +1,7 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from pathlib import Path
 import re
+from typing import TYPE_CHECKING
 
 from .cef_surface import CEFContribution, CEFSurface
 from .cef_terms import (
@@ -11,7 +13,15 @@ from .cef_terms import (
     TwoSublatticeBinaryExcessTerm,
 )
 from .magnetic import CEFMagneticContribution
-from .polynomial import TempPolynomial, TempPolynomialwCorrection
+from .polynomial import (
+    ParameterizedExpression,
+    TemperatureExpression,
+    TempPolynomial,
+    TempPolynomialwCorrection,
+)
+
+if TYPE_CHECKING:
+    from .cef_model import CEF, CEFConfig
 
 
 _CORRECTION_PHYSICAL_SCALES = {
@@ -144,6 +154,7 @@ def get_excess_term_from_tdb_string(
     correction_order: int | None = None,
     initial_parameter_scale: float = 0.1,
     ternary_l0_only: bool = False,
+    interaction_factory: Callable[[str], TemperatureExpression] | None = None,
 ) -> CEFExcessTerm | None:
     parsed = _parse_tdb_parameter_command(command, parameter_name)
     if parsed is None:
@@ -160,9 +171,11 @@ def get_excess_term_from_tdb_string(
             f"got {len(site_entries)}: {command}"
         )
 
-    if correction_order is not None:
+    if interaction_factory is not None:
+        interaction = interaction_factory(expression)
+    elif correction_order is not None:
         parameter_name = parameter_name.upper()
-        polynomial = TempPolynomialwCorrection.from_expression(
+        interaction = TempPolynomialwCorrection.from_expression(
             expression,
             list(range(correction_order + 1)),
             temperature_ref=temperature_ref,
@@ -170,7 +183,7 @@ def get_excess_term_from_tdb_string(
             initial_parameter_scale=initial_parameter_scale,
         )
     else:
-        polynomial = TempPolynomial.from_expression(
+        interaction = TempPolynomial.from_expression(
             expression,
             temperature_ref=temperature_ref,
         )
@@ -186,7 +199,7 @@ def get_excess_term_from_tdb_string(
                 (index, entry)
                 for index, entry in enumerate(site_entries)
             ),
-            interaction=polynomial,
+            interaction=interaction,
         )
         term.validate(context)
         return term
@@ -218,7 +231,7 @@ def get_excess_term_from_tdb_string(
                 pair=mixed_components,
                 order=order,
                 conditioners=conditioners,
-                interaction=polynomial,
+                interaction=interaction,
             )
             term.validate(context)
             return term
@@ -228,7 +241,7 @@ def get_excess_term_from_tdb_string(
                 triplet=mixed_components,
                 order=order,
                 conditioners=conditioners,
-                interaction=polynomial,
+                interaction=interaction,
                 is_l0_only=ternary_l0_only,
             )
             term.validate(context)
@@ -247,7 +260,7 @@ def get_excess_term_from_tdb_string(
             pair2=mixed_components2,
             order=order,
             conditioners=conditioners,
-            interaction=polynomial,
+            interaction=interaction,
         )
         term.validate(context)
         return term
@@ -265,6 +278,7 @@ def get_cef_surface_from_tdb_string(
     temperature_ref: float = 1000,
     correction_order: int | None = None,
     initial_parameter_scale: float = 0.1,
+    interaction_factory: Callable[[str], TemperatureExpression] | None = None,
 ) -> CEFSurface:
     phase_name = phase_name.upper()
     parameter_name = parameter_name.upper()
@@ -298,6 +312,7 @@ def get_cef_surface_from_tdb_string(
             correction_order=correction_order,
             initial_parameter_scale=initial_parameter_scale,
             ternary_l0_only=(orders_by_site[(parameter_phase, site_array)] == {0}),
+            interaction_factory=interaction_factory,
         )
         if term is not None:
             terms.append(term)
@@ -337,6 +352,7 @@ def get_cef_context_and_contributions_from_tdb_string(
     temperature_ref: float = 1000,
     correction_order: int | None = None,
     zero_initialize_corrections: bool = False,
+    interaction_factory: Callable[[str], TemperatureExpression] | None = None,
 ) -> tuple[CEFContext, Sequence[CEFContribution]]:
     context = get_cef_context_from_tdb_string(tdb_string, phase_name)
     initial_parameter_scale = 0.0 if zero_initialize_corrections else 0.1
@@ -348,6 +364,7 @@ def get_cef_context_and_contributions_from_tdb_string(
         temperature_ref=temperature_ref,
         correction_order=correction_order,
         initial_parameter_scale=initial_parameter_scale,
+        interaction_factory=interaction_factory,
     )
     contributions: list[CEFContribution] = [energy_surface]
 
@@ -362,6 +379,7 @@ def get_cef_context_and_contributions_from_tdb_string(
             temperature_ref=temperature_ref,
             correction_order=correction_order,
             initial_parameter_scale=initial_parameter_scale,
+            interaction_factory=interaction_factory,
         )
         beta_surface = get_cef_surface_from_tdb_string(
             tdb_string,
@@ -371,6 +389,7 @@ def get_cef_context_and_contributions_from_tdb_string(
             temperature_ref=temperature_ref,
             correction_order=correction_order,
             initial_parameter_scale=initial_parameter_scale,
+            interaction_factory=interaction_factory,
         )
         contributions.append(
             CEFMagneticContribution(
@@ -381,3 +400,57 @@ def get_cef_context_and_contributions_from_tdb_string(
             )
         )
     return context, tuple(contributions)
+
+
+class SymbolicCEFParser:
+    """Construct CEF models whose TDB parameter expressions are symbolic modules."""
+
+    def __init__(
+        self,
+        filename: str | Path,
+        *,
+        initial_parameter_scale: float = 0.1,
+    ):
+        self.path = Path(filename)
+        self.tdb_string = self.path.read_text()
+        self.initial_parameter_scale = float(initial_parameter_scale)
+
+
+    def _create_expression(self, expression: str) -> ParameterizedExpression:
+        return ParameterizedExpression(
+            expression,
+            initial_parameter_scale=self.initial_parameter_scale,
+        )
+
+
+    def get_model_for_phase(
+        self,
+        phase_name: str,
+        config: "CEFConfig | None" = None,
+        **kwargs,
+    ) -> "CEF":
+        from .cef_model import CEF
+
+        phase_name = phase_name.upper()
+        context, contributions = get_cef_context_and_contributions_from_tdb_string(
+            self.tdb_string,
+            phase_name,
+            interaction_factory=self._create_expression,
+        )
+        components_by_sublattice: list[list[tuple[int, str]]] = [
+            [] for _ in range(context.nsublattice)
+        ]
+        for (component, sublattice), index in context.y_names_to_index.items():
+            components_by_sublattice[sublattice].append((index, component))
+        components = tuple(
+            tuple(component for _, component in sorted(sublattice_components))
+            for sublattice_components in components_by_sublattice
+        )
+        return CEF(
+            components,
+            context.sublattice_multiplicities,
+            contributions=contributions,
+            config=config,
+            name=phase_name,
+            **kwargs,
+        )
