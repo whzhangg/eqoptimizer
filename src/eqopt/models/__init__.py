@@ -9,13 +9,28 @@ from .calphad.cef_terms import (
     CEFContext,
     CEFExcessTerm,
     EndMemberTerm,
-    get_cef_context_and_terms_from_tdb_string,
-    get_excess_term_from_tdb_string,
     BinaryExcessTerm,
     TwoSublatticeBinaryExcessTerm,
     TernaryExcessTerm,
 )
-from .calphad.polynomial import TempPolynomial, TempPolynomialwCorrection
+from .calphad.cef_parser import (
+    get_cef_context_and_contributions_from_tdb_string,
+    get_cef_context_from_tdb_string,
+    get_cef_surface_from_tdb_string,
+    get_excess_term_from_tdb_string,
+    get_magnetic_parameters_from_tdb_string,
+)
+from .calphad.polynomial import (
+    ParameterizedExpression,
+    TemperatureExpression,
+    TempPolynomial,
+    TempPolynomialwCorrection,
+)
+from .calphad.cef_surface import CEFContribution, CEFSurface
+from .calphad.magnetic import (
+    CEFMagneticContribution,
+    magnetic_free_energy_Inden_Hillert_Jarl,
+)
 
 __all__ = [
     "ThermodynamicModel",
@@ -25,12 +40,21 @@ __all__ = [
     "CEFConfig",
     "CEFContext",
     "CEFExcessTerm",
+    "CEFContribution",
+    "CEFSurface",
+    "CEFMagneticContribution",
     "EndMemberTerm",
-    "get_cef_context_and_terms_from_tdb_string",
+    "get_cef_context_and_contributions_from_tdb_string",
+    "get_cef_context_from_tdb_string",
+    "get_cef_surface_from_tdb_string",
     "get_excess_term_from_tdb_string",
+    "get_magnetic_parameters_from_tdb_string",
     "BinaryExcessTerm",
     "TwoSublatticeBinaryExcessTerm",
+    "ParameterizedExpression",
+    "TemperatureExpression",
     "TempPolynomial",
     "TempPolynomialwCorrection",
     "TernaryExcessTerm",
+    "magnetic_free_energy_Inden_Hillert_Jarl",
 ]

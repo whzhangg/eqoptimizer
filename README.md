@@ -6,14 +6,14 @@ This package supports optimization of CALPHAD-type and non-CALPHAD-type thermody
 
 ### Installation
 
-This project depends on the following packages: `torch`, `numpy`, `scipy`, `rich`. `ase` is needed for the use of potential. Optionally, `pycalphad` is used for reference equilibrium calculation.
+This project depends on the following packages: `torch`, `numpy`, `scipy`, `sympy`, `rich`. `ase` is needed for the use of potential. Optionally, `pycalphad` is used for reference equilibrium calculation.
 
 To install the code, simply install dependencies through `pip` and install directly. `conda-forge` can be used to manage the environment:
 
 ```bash
 conda create -n eqopt python=3.12
 conda activate eqopt
-conda install torch numpy scipy rich ase pycalphad
+conda install torch numpy scipy sympy rich ase pycalphad
 pip install -e .
 ```
 

@@ -2,7 +2,6 @@ import math
 import torch
 from pathlib import Path
 from typing import Sequence, Mapping
-from torch import nn
 import numpy as np
 import dataclasses
 
@@ -14,11 +13,9 @@ from ..shared import (
     scalar_temperature,
 )
 from ..singlephase_abc import ThermodynamicModel
-from .cef_terms import (
-    CEFContext,
-    CEFExcessTerm,
-    get_cef_context_and_terms_from_tdb_string,
-)
+from .cef_parser import get_cef_context_and_contributions_from_tdb_string
+from .cef_surface import CEFContribution
+from .cef_terms import CEFContext
 
 
 @dataclasses.dataclass
@@ -79,7 +76,7 @@ class CEF(ThermodynamicModel):
     def __init__(self,
         components_on_sublattices: Sequence[Sequence[str]],
         sublattice_multiplicities: Sequence[float],
-        energy_terms: Sequence[CEFExcessTerm],
+        contributions: Sequence[CEFContribution],
         config: CEFConfig | None = None,
         *,
         name: str | None = None,
@@ -133,15 +130,14 @@ class CEF(ThermodynamicModel):
             sublattice_multiplicities=self.sublattice_multiplicities,
             phase_name=self.phase_name,
         )
-        self.energy_terms = tuple(energy_terms)
-        for term in self.energy_terms:
-            if not isinstance(term, CEFExcessTerm):
-                raise TypeError(f"Unsupported CEF energy term {type(term).__name__}.")
-            term.validate(self.context)
-
-        self.energy_interactions = nn.ModuleList(
-            [term.interaction for term in self.energy_terms]
-        )
+        contributions = tuple(contributions)
+        for contribution in contributions:
+            if not isinstance(contribution, CEFContribution):
+                raise TypeError(
+                    f"Unsupported CEF contribution {type(contribution).__name__}."
+                )
+            contribution.validate(self.context)
+        self.contributions = torch.nn.ModuleList(contributions)
 
         multi_for_each_y = []
         for i, nc in enumerate(self.ncomp_for_each_sublattice):
@@ -162,6 +158,7 @@ class CEF(ThermodynamicModel):
         *,
         temperature_ref: float = 1000,
         correction_order: int | None = None,
+        zero_initialize_corrections: bool = False,
         **kwargs,
     ) -> "CEF":
         phase_name = phase_name.upper()
@@ -169,11 +166,12 @@ class CEF(ThermodynamicModel):
         if not path.exists():
             raise FileNotFoundError(f"TDB file does not exist: {path}")
         text = path.read_text()
-        context, terms = get_cef_context_and_terms_from_tdb_string(
+        context, contributions = get_cef_context_and_contributions_from_tdb_string(
             text,
             phase_name,
             temperature_ref=temperature_ref,
             correction_order=correction_order,
+            zero_initialize_corrections=zero_initialize_corrections,
         )
         components_by_sublattice: list[list[tuple[int, str]]] = [
             [] for _ in range(context.nsublattice)
@@ -188,7 +186,7 @@ class CEF(ThermodynamicModel):
         return cls(
             components,
             context.sublattice_multiplicities,
-            terms,
+            contributions=contributions,
             config=config,
             name=phase_name,
             **kwargs,
@@ -204,8 +202,8 @@ class CEF(ThermodynamicModel):
         comps = ' : '.join(
             [','.join([str(_c) for _c in comps]) for comps in self.components_on_sublattices])
         lines.append(f'constituent {self.phase_name} : {comps} : !')
-        for term in self.energy_terms:
-            lines.append(term.to_tdb_str(self.context))
+        for contribution in self.contributions:
+            lines.extend(contribution.to_tdb_strings(self.context))
         return '\n'.join(lines).upper()
 
 
@@ -472,9 +470,8 @@ class CEF(ThermodynamicModel):
         temperature = scalar_temperature(temperature)
         y = torch.as_tensor(y, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
         total = torch.zeros(y.shape[:-1], dtype=y.dtype, device=y.device)
-
-        for term in self.energy_terms:
-            total += term.get_contribution(y, temperature, self.context)
+        for contribution in self.contributions:
+            total = total + contribution(y, temperature, self.context)
 
         # entropy
         ylogy = R * temperature * (y * y.clamp_min(1.0e-12).log())
