@@ -6,14 +6,16 @@ This package supports optimization of CALPHAD-type and non-CALPHAD-type thermody
 
 ### Installation
 
-This project depends on the following packages: `torch`, `numpy`, `scipy`, `sympy`, `rich`. `ase` is needed for the use of potential. Optionally, `pycalphad` is used for reference equilibrium calculation.
+This project depends on the following packages: `torch`, `numpy`, `scipy`, `sympy`, `rich`,
+`pandas`, and `pyyaml`. `ase` is needed for the use of potential. Optionally, `pycalphad` is used
+for reference equilibrium calculation.
 
 To install the code, simply install dependencies through `pip` and install directly. `conda-forge` can be used to manage the environment:
 
 ```bash
 conda create -n eqopt python=3.12
 conda activate eqopt
-conda install torch numpy scipy sympy rich ase pycalphad
+conda install torch numpy scipy sympy rich pandas pyyaml ase pycalphad
 pip install -e .
 ```
 
@@ -56,7 +58,8 @@ This package is under development, and currently:
 
 - Optimization utilizes phase equilibria only, optimization with respect to other forms of experimental data such as thermochemical data is not yet supported.
 
-- Compound energy formalism (CEF) model is supported which includes compound phases, solid solution phases and intermetallics. However, excess physical terms (for example, magnetic contribution) in the Gibbs energy is not yet implemented.
+- Compound energy formalism (CEF) models support compound phases, solution phases, intermetallics,
+  and the Inden-Hillert-Jarl magnetic Gibbs-energy contribution.
 
 - Loading initial models from a TDB file is possible but is currently done in a very simple way and can be sensitive to the syntax. (see examples)
 

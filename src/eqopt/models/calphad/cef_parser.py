@@ -414,6 +414,11 @@ class SymbolicCEFParser:
         self.path = Path(filename)
         self.tdb_string = self.path.read_text()
         self.initial_parameter_scale = float(initial_parameter_scale)
+        self.phase_names = tuple(
+            match.group(1).upper()
+            for command in _tdb_commands(self.tdb_string)
+            if (match := re.match(r"PHASE\s+([^\s]+)", command, flags=re.IGNORECASE))
+        )
 
 
     def _create_expression(self, expression: str) -> ParameterizedExpression:
