@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eqopt"
+version = "0.2"
+description = "Gibbs energy correction for phase diagrams"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE.txt"]
+authors = [
+    { name = "Wenhao Zhang", email = "ZHANG.Wenhao@nims.go.jp" },
+]
+dependencies = [
+    "torch",
+    "pycalphad",
+    "rich",
+    "numpy",
+    "scipy",
+    "sympy",
+    "ase",
+    "pandas",
+    "PyYAML",
+]
+
+[project.scripts]
+eqopt-calphad = "eqopt.cli.calphad:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

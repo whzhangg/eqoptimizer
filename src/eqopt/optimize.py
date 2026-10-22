@@ -508,6 +508,7 @@ def optimize_thermodynamic_parameters(
                 lr=config.mu_init_lr,
                 max_iter=config.mu_init_max_iter,
                 cosine_decay=config.mu_init_cosine_decay,
+                min_lr_factor=config.mu_init_min_lr_factor,
                 convergence_tol=config.mu_convergence_tol,
                 relu_margin=config.relu_margin,
                 unstable_huber_beta=config.unstable_huber_beta,

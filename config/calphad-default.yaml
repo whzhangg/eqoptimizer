@@ -1,64 +1,67 @@
-# Reference configuration for phrefine-calphad using all program defaults.
+# Reference configuration for eqopt-calphad using all program defaults.
+general:
+  output_dir: results                   # Directory for outputs.
+  record_every: 50                      # Epoch interval for full loss recording and checkpointing.
+  print_final_results: true             # Print chemical potentials and phase grand potentials.
+  initial_parameter_scale: 0.1          # Symbol initialization std.; 0 gives exact zeros.
 
 optimization:
-  batch_size: null  # Equilibria per batch; null uses the full dataset.
-  epochs: 1000  # Number of passes through the equilibrium dataset.
-  lr: 1000.0  # Learning rate for thermodynamic-model parameters.
-  latent_mu_lr: null  # Latent chemical-potential lr; null uses the model lr.
-  optimizer_cls: Adam  # Optimizer class name under torch.optim.
-  loss_threshold: null  # Early-stopping total loss; null disables it.
-  cosine_decay: true  # Apply cosine learning-rate decay.
-  min_lr_factor: 0.2  # Final lr divided by the initial lr.
+  epochs: 1000                          # Number of passes through the equilibrium dataset.
+  batch_size: null                      # Equilibria per batch; null uses the full dataset.
 
-  stable_weight: 1.0  # Weight of the stable-phase loss.
-  unstable_weight: 1.0  # Weight of the unstable-phase loss.
-  regularization_weight: 1.0e-10  # Weight of squared-parameter regularization.
-  regularize_difference: false  # Regularize parameter changes instead of values.
+  # learning rate
+  lr: 1.0                            # Learning rate for thermodynamic-model parameters.
+  cosine_decay: true                    # Apply cosine learning-rate decay.
+  min_lr_factor: 0.2                    # Final lr divided by the initial lr.
+  optimizer_cls: Adam                   # Optimizer class name under torch.optim.
 
-  use_huber_for_stable_phases: true  # Use Huber loss for stable phases.
-  relu_margin: 0.0  # Required unstable-phase grand-potential margin in J/mol.
-  unstable_huber_beta: 1.0  # Unstable-phase Huber transition in J/mol; null is linear.
-  scale_energy_by_rt: false  # Divide grand-potential residuals by R*T.
-  composition_projection_tol: 1.0e-3  # Composition feasibility projection tolerance.
+  # loss
+  stable_weight: 1.0                    # Weight of the stable-phase loss.
+  unstable_weight: 1.0                  # Weight of the unstable-phase loss.
+  regularization_weight: 1.0e-10        # Weight of squared-parameter regularization.
+  regularize_difference: false          # Regularize parameter changes instead of values.
+  loss_threshold: null                  # Early-stopping total loss; null disables it.
+  use_huber_for_stable_phases: true     # Use Huber loss for stable phases.
+  relu_margin: 0.0                      # Required unstable-phase grand-potential margin in J/mol.
+  unstable_huber_beta: 1.0              # Unstable-phase Huber transition in J/mol; null is linear.
+  scale_energy_by_rt: false             # Divide grand-potential residuals by R*T.
 
-  mu_convergence_tol: 50.0  # Initial latent-mu convergence tolerance in J/mol.
-  mu_init_lr: 10000.0  # Initial latent-mu optimization learning rate.
-  mu_init_max_iter: 1000  # Maximum initial latent-mu iterations.
-  mu_init_cosine_decay: true  # Apply cosine decay during latent-mu initialization.
-  mu_strategy: auto  # Select analytic or latent chemical potentials automatically.
+  # auxiliary chemical potential
+  mu_strategy: auto                     # Automatically select analytic or latent mu.
+  mu_init_max_iter: 1000                # Maximum initial latent-mu iterations (initialization).
+  mu_convergence_tol: 50.0              # Initialization convergence tolerance in J/mol.
+  mu_init_lr: 10000.0                   # Latent-mu initialization learning rate.
+  mu_init_cosine_decay: true            # Apply cosine decay during latent-mu initialization.
+  mu_init_min_lr_factor: 0.1            # Final initialization lr divided by its initial lr.
+  latent_mu_lr: null                    # Latent chemical-potential lr; null uses the model lr.
 
-model:
-  initial_parameter_scale: 0.1  # Symbol initialization std.; 0 gives exact zeros.
+  # project equilibrium composition (e.g., convert 0.3333 to 1/3 that is competible with model)
+  composition_projection_tol: 1.0e-3    # Composition feasibility projection tolerance.
 
-  cef:
-    # Sampling and minimum pooling
-    n_samples: 64  # Base internal-coordinate sampling density.
-    n_samples_cached: 4  # Best points retained as warm starts.
-    use_softmin: true  # Use differentiable softmin instead of minimum.
-    softmin_tau: null  # Softmin temperature in J/mol; null selects it automatically.
-    eps: 1.0e-8  # Numerical floor for divisions and logarithms.
+cef:
+  # Sampling and minimum pooling
+  n_samples: 64                       # Base internal-coordinate sampling density.
+  n_samples_cached: 4                 # Best points retained as warm starts.
+  use_softmin: true                   # Use differentiable softmin instead of minimum.
+  softmin_tau: null                   # Softmin temperature in J/mol; null selects automatically.
+  eps: 1.0e-8                         # Numerical floor for divisions and logarithms.
 
-    # Grand-potential minimization
-    grand_potential_steps: 6  # Number of exponentiated-gradient steps.
-    grand_potential_delta: 0.3  # Target simplex update size.
-    max_step_factor: 1.5  # Backtrack above this multiple of delta.
+  # Grand-potential minimization
+  grand_potential_steps: 6            # Number of exponentiated-gradient steps.
+  grand_potential_delta: 0.3          # Target simplex update size.
+  max_step_factor: 1.5                # Backtrack above this multiple of delta.
 
-    # Fixed-composition Gibbs-energy minimization
-    gibbs_energy_steps: 6  # Number of constrained exponentiated-gradient steps.
-    gibbs_energy_delta: 0.3  # Target constrained update size.
-    gibbs_energy_max_logit_step: 3.0  # Maximum site-fraction logit change per step.
-    active_composition_tol: 1.0e-8  # Compositions below this value are inactive.
+  # Fixed-composition Gibbs-energy minimization
+  gibbs_energy_steps: 6               # Number of constrained exponentiated-gradient steps.
+  gibbs_energy_delta: 0.3             # Target constrained update size.
+  gibbs_energy_max_logit_step: 3.0    # Maximum site-fraction logit change per step.
+  active_composition_tol: 1.0e-8      # Compositions below this value are inactive.
 
-    # Dual Newton solver for composition constraints
-    newton_steps: 20  # Maximum Newton iterations for composition multipliers.
-    newton_damping: 1.0e-10  # Diagonal damping for the constraint Jacobian.
-    max_dual_step: 2.0  # Maximum dual-multiplier change per Newton step.
-    constraint_tol: 1.0e-6  # Required absolute composition accuracy.
-    dual_backtracking_steps: 10  # Maximum backtracking trials for dual updates.
-    primal_backtracking_steps: 6  # Maximum backtracking trials for primal updates.
-    composition_penalty_weight: null  # Composition-drift penalty; null disables it.
-
-runtime:
-  output_dir: results  # Directory for optimized.tdb and checkpoints.
-  record_every: 10  # Epoch interval for full loss recording and checkpointing.
-  print_final_results: true  # Print chemical potentials and phase grand potentials.
+  # Dual Newton solver for composition constraints
+  newton_steps: 20                    # Maximum Newton iterations for composition multipliers.
+  newton_damping: 1.0e-10             # Diagonal damping for the constraint Jacobian.
+  max_dual_step: 2.0                  # Maximum dual-multiplier change per Newton step.
+  constraint_tol: 1.0e-6              # Required absolute composition accuracy.
+  dual_backtracking_steps: 10         # Maximum backtracking trials for dual updates.
+  primal_backtracking_steps: 6        # Maximum backtracking trials for primal updates.
+  composition_penalty_weight: null    # Composition-drift penalty; null disables it.

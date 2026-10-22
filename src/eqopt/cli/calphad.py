@@ -71,7 +71,7 @@ def _optimized_tdb_string(
 
 def _argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="phrefine-calphad",
+        prog="eqopt-calphad",
         description="Optimize parameterized CALPHAD models against phase equilibria.",
     )
     parser.add_argument("tdb", type=Path, help="Parameterized input TDB file.")
@@ -80,7 +80,7 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        help="Output directory, overriding runtime.output_dir from the YAML file.",
+        help="Output directory, overriding general.output_dir from the YAML file.",
     )
     return parser
 
@@ -88,25 +88,20 @@ def _argument_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _argument_parser().parse_args(argv)
     values = _read_config(arguments.config)
-    model_options = _pop_section(values, "model")
+    general_options = _pop_section(values, "general")
     optimization_options = _pop_section(values, "optimization")
-    runtime_options = _pop_section(values, "runtime")
+    cef_options = _pop_section(values, "cef")
     if values:
         names = ", ".join(sorted(values))
         raise TypeError(f"Unknown top-level configuration section(s): {names}")
 
-    initial_parameter_scale = float(model_options.pop("initial_parameter_scale", 0.1))
-    cef_options = _pop_section(model_options, "cef")
-    if model_options:
-        names = ", ".join(sorted(model_options))
-        raise TypeError(f"Unknown model configuration option(s): {names}")
-
-    output_dir = arguments.output_dir or Path(runtime_options.pop("output_dir", "results"))
-    record_every = int(runtime_options.pop("record_every", 10))
-    print_final_results = bool(runtime_options.pop("print_final_results", True))
-    if runtime_options:
-        names = ", ".join(sorted(runtime_options))
-        raise TypeError(f"Unknown runtime configuration option(s): {names}")
+    initial_parameter_scale = float(general_options.pop("initial_parameter_scale", 0.1))
+    output_dir = arguments.output_dir or Path(general_options.pop("output_dir", "results"))
+    record_every = int(general_options.pop("record_every", 10))
+    print_final_results = bool(general_options.pop("print_final_results", True))
+    if general_options:
+        names = ", ".join(sorted(general_options))
+        raise TypeError(f"Unknown general configuration option(s): {names}")
 
     # load the thermodynamic models
     parser = SymbolicCEFParser(

@@ -27,6 +27,7 @@ class OptimizationConfig:
     mu_init_lr: float = 10000.0
     mu_init_max_iter: int = 1000
     mu_init_cosine_decay: bool = True
+    mu_init_min_lr_factor: float = 0.1
     mu_strategy: str = "auto"
 
 

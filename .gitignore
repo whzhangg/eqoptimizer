@@ -24,3 +24,4 @@ manuscript
 .vscode
 
 src/potentials/meam
+src/*.egg-info

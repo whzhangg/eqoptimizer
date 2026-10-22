@@ -237,6 +237,7 @@ class PhaseEquilibriumOptState(torch.nn.Module):
         lr: float = 2000.0,
         max_iter: int = 1000,
         cosine_decay: bool = True,
+        min_lr_factor: float = 0.1,
         convergence_tol: float = 50.0,
         relu_margin: float = 0.0,
         unstable_huber_beta: float | None = 1.0,
@@ -273,7 +274,8 @@ class PhaseEquilibriumOptState(torch.nn.Module):
 
                 def lr_factor(step: int) -> float:
                     progress = min(max(step, 0), total_steps) / total_steps
-                    return 0.5 * (1.0 + math.cos(math.pi * progress))
+                    cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+                    return min_lr_factor + (1.0 - min_lr_factor) * cosine
 
                 scheduler = torch.optim.lr_scheduler.LambdaLR(
                     optimizer,
