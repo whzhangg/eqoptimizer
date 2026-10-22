@@ -15,50 +15,28 @@ class PhaseModels:
 
     @classmethod
     def from_tdbfile(cls, tdbfilename: str):
-        with open(tdbfilename, "r") as f:
-            tdb_content = [line.strip().upper() for line in f if line.strip()]
-        
-        tdb_content = [line for line in tdb_content if not line.startswith('$')]
-        all_elements = []
-        all_phases = []
-        phase_model = {}
-        for aline in tdb_content:
-            if aline.startswith("ELEMENT"):
-                all_elements.append(aline.split()[1])
-            if aline.startswith("PHASE"):
-                all_phases.append(aline.split()[1])
-        phase_model["components"] = all_elements
-        phase_model["phases"] = {}
-        for phase in all_phases:
-            sublattices = None
-            sublattice_constituent = None
-            for aline in tdb_content:
-                splitted = aline.split()
-                if "PHASE" in splitted and phase in splitted:
-                    nsub = int(splitted[3])
-                    sublattices = [float(p) for p in splitted[4 : 4 + nsub]]
-                    break
-            for aline in tdb_content:
-                splitted = aline.split()
-                if "CONSTITUENT" in splitted and phase in splitted and sublattices is not None:
-                    nsub = len(sublattices)
-                    sublattice_constituent = [
-                        [pp.strip() for pp in p.split(",")]
-                        for p in aline.split(":")[1 : 1 + nsub]
-                    ]
-                    break
-            if sublattices is not None and sublattice_constituent is not None:
-                phase_model["phases"][phase] = {
-                    "sublattice_model": sublattice_constituent,
-                    "sublattice_site_ratios": sublattices,
-                }
+        from pycalphad import Database
 
-        if '/-' in phase_model['components']:
-            phase_model['components'].remove('/-')
-        return cls(
-            phase_model['components'],
-            phase_model['phases']
+        database = Database(tdbfilename)
+        components = tuple(
+            component
+            for component in sorted(database.elements)
+            if component != "/-"
         )
+        phases = {
+            phase_name: {
+                "sublattice_model": tuple(
+                    tuple(
+                        species.name
+                        for species in sorted(constituents, key=lambda item: item.name)
+                    )
+                    for constituents in phase.constituents
+                ),
+                "sublattice_site_ratios": tuple(float(value) for value in phase.sublattices),
+            }
+            for phase_name, phase in database.phases.items()
+        }
+        return cls(components, phases)
 
 
     def get_phase_elements(self, name: str) -> tuple[str, ...]:

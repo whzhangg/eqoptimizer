@@ -11,6 +11,7 @@ examples/06-AuCu/results/*.py
 examples/06-AuCu/results/*.pt
 examples/06-AuCu/resources/*.py
 examples/06-AuCu/previous
+examples/07-CrFe/results
 
 examples/**/figures/
 examples/trash
