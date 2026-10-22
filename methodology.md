@@ -138,14 +138,9 @@ $$
 $$
 The lower bound can be reached when all values of $\mathbf{x}$ are equal. The $\tau$ parameter controls the contribution of points above the minimium. From the formula, we see that the more points we sample, the larger estimation error we will have. If we set an upper bound for error for example $1\, \mathrm{J/mol}$, we can set $\tau\approx 1/\log(n)$. 
 
-## Thermodynamic Models
+## Thermodynamic system
 
 To describe a thermodynamic systems, it is necessary for the model to provide free energy for all possible phases. In this work, we consider that phases are associated with a unique identifier (`PhaseID` in the implementation). A model of the thermodynamic system (`ThermodynamicSystem` in the implementation) defines free energy of possible phases and should be able to provide Gibbs energy of any of the defined phases given an input composition and grand potential given an input chemical potential. 
 
-In the CALPHAD approach, each phase has their own thermodynamic model with different parameters and the thermodynamic system is just an ensemble (`EnsembleSystem(ThermodynamicSystem)`) of defined single phase models (`ThermodynamicModel`). Thus, the thermodynamic potential of each phase by calculated by the associated model. In particular, we have defined the class `CEF(ThermodynamicModel)` for compound energy formalism models, the detail of which is given in the manuscript. However, it is also possible that a global model provide thermodynamic description of all phases, which may be the case of machine learning interatomic potential.
+In the CALPHAD approach, for example, each phase has their own thermodynamic model with different parameters and the thermodynamic system is just an ensemble (`EnsembleSystem(ThermodynamicSystem)`) of defined single phase models (`ThermodynamicModel`). Thus, the thermodynamic potential of each phase by calculated by the associated model. In particular, we have defined the class `CEF(ThermodynamicModel)` for compound energy formalism models. However, it is also possible that a global model provide thermodynamic description of all phases, which may be the case of machine learning interatomic potential.
 
-Regarding the implementation of compound energy formalism, a few details are considered to make the resulting energy identifical to pycalphad:
-
-- In pycalphad, element order are sorted alphabetically within each sublattice, and this convention is also used.
-- To make the energy competible to pycalphad definition, if only the $L^{(0)}$ term is specified for the ternary interaction, it will be set that $L^{(0)} = L^{(1)} = L^{(2)}$.
-- For two sublattice mixing, convention of the $L^{(1)}$ and $L^{(2)}$ ($L^{(1)}$ for the second sublattice of mixing and $L^{(2)}$ for the first) follows implementation of pycalphad, which seems to further refers to result from ThermoCal.
