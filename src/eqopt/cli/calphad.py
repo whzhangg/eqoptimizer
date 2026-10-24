@@ -108,9 +108,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         arguments.tdb,
         initial_parameter_scale=initial_parameter_scale,
     )
+    parsed_models = parser.get_models(config=CEFConfig(**cef_options))
     models = {}
-    for phase_name in parser.phase_names:
-        model = parser.get_model_for_phase(phase_name, config=CEFConfig(**cef_options))
+    for phase_name, model in parsed_models.items():
         phase_id = PhaseID(name=phase_name, elements=tuple(model.elements))
         models[phase_id] = model
     system = EnsembleSystem(models)

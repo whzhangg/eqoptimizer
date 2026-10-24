@@ -345,6 +345,31 @@ def get_magnetic_parameters_from_tdb_string(
     return None
 
 
+def get_order_disorder_relations_from_tdb_string(
+    tdb_string: str,
+) -> dict[str, str]:
+    """Return ordered-to-disordered phase relationships from type definitions."""
+    pattern = re.compile(
+        r'TYPE(?:-DEF|_DEF(?:INITION)?)\s+\S+\s+GES\s+'
+        r'(?:AMEND_PHASE_DESCRIPTION|A_P_D)\s+'
+        r'([^,\s]+)\s+(?:DIS_PART|DISORDERED_PART)\s+([^,\s]+)',
+        flags=re.IGNORECASE,
+    )
+    relations = {}
+    for command in _tdb_commands(tdb_string):
+        match = pattern.match(command.strip())
+        if match is None:
+            continue
+        ordered_phase = match.group(1).upper()
+        disordered_phase = match.group(2).upper()
+        if ordered_phase in relations and relations[ordered_phase] != disordered_phase:
+            raise ValueError(
+                f"Ordered phase {ordered_phase!r} has multiple disordered references."
+            )
+        relations[ordered_phase] = disordered_phase
+    return relations
+
+
 def get_cef_context_and_contributions_from_tdb_string(
     tdb_string: str,
     phase_name: str,
@@ -419,6 +444,12 @@ class SymbolicCEFParser:
             for command in _tdb_commands(self.tdb_string)
             if (match := re.match(r"PHASE\s+([^\s]+)", command, flags=re.IGNORECASE))
         )
+        self.order_disorder_relations = get_order_disorder_relations_from_tdb_string(
+            self.tdb_string
+        )
+        self.models: dict[str, "CEF"] = {}
+        # temporary set 
+        self._phases_being_constructed: set[str] = set()
 
 
     def _create_expression(self, expression: str) -> ParameterizedExpression:
@@ -435,27 +466,76 @@ class SymbolicCEFParser:
         **kwargs,
     ) -> "CEF":
         from .cef_model import CEF
+        from .order_disorder import SplitCEF
 
         phase_name = phase_name.upper()
-        context, contributions = get_cef_context_and_contributions_from_tdb_string(
-            self.tdb_string,
-            phase_name,
-            interaction_factory=self._create_expression,
-        )
-        components_by_sublattice: list[list[tuple[int, str]]] = [
-            [] for _ in range(context.nsublattice)
-        ]
-        for (component, sublattice), index in context.y_names_to_index.items():
-            components_by_sublattice[sublattice].append((index, component))
-        components = tuple(
-            tuple(component for _, component in sorted(sublattice_components))
-            for sublattice_components in components_by_sublattice
-        )
-        return CEF(
-            components,
-            context.sublattice_multiplicities,
-            contributions=contributions,
-            config=config,
-            name=phase_name,
-            **kwargs,
-        )
+        if phase_name in self.models:
+            return self.models[phase_name]
+        if phase_name not in self.phase_names:
+            raise ValueError(f"Unknown phase {phase_name!r}.")
+        if phase_name in self._phases_being_constructed:
+            raise ValueError(
+                f"Cyclic order-disorder phase relationship involving {phase_name!r}."
+            )
+
+        self._phases_being_constructed.add(phase_name)
+        try:
+            context, contributions = get_cef_context_and_contributions_from_tdb_string(
+                self.tdb_string,
+                phase_name,
+                interaction_factory=self._create_expression,
+            )
+            components = _components_from_context(context)
+            disordered_phase = self.order_disorder_relations.get(phase_name)
+            if disordered_phase is None:
+                model = CEF(
+                    components,
+                    context.sublattice_multiplicities,
+                    contributions=contributions,
+                    config=config,
+                    name=phase_name,
+                    **kwargs,
+                )
+            else:
+                # recursive
+                disordered_model = self.get_model_for_phase(
+                    disordered_phase,
+                    config=config,
+                    **kwargs,
+                )
+                model = SplitCEF(
+                    components,
+                    context.sublattice_multiplicities,
+                    contributions=contributions,
+                    disordered_model=disordered_model,
+                    config=config,
+                    name=phase_name,
+                    **kwargs,
+                )
+            self.models[phase_name] = model
+            return model
+        finally:
+            self._phases_being_constructed.remove(phase_name)
+
+
+    def get_models(
+        self,
+        config: "CEFConfig | None" = None,
+        **kwargs,
+    ) -> dict[str, "CEF"]:
+        """Construct all phases once and return them by phase name."""
+        for phase_name in self.phase_names:
+            self.get_model_for_phase(phase_name, config=config, **kwargs)
+        return dict(self.models)
+
+
+def _components_from_context(context: CEFContext) -> tuple[tuple[str, ...], ...]:
+    components_by_sublattice: list[list[tuple[int, str]]] = [
+        [] for _ in range(context.nsublattice)
+    ]
+    for (component, sublattice), index in context.y_names_to_index.items():
+        components_by_sublattice[sublattice].append((index, component))
+    return tuple(
+        tuple(component for _, component in sorted(sublattice_components))
+        for sublattice_components in components_by_sublattice
+    )

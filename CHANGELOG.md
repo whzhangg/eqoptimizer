@@ -1,5 +1,9 @@
 # Change log
 
+## 2026-10-24
+
+- added order-disorder model (split-CEF) documented by '/docs/calphad.md'.
+
 ## 2026-10-21
 
 ### Code changes

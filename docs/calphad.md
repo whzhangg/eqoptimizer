@@ -72,3 +72,57 @@ T_c^{\mathrm{tdb}}/\alpha & T_c^{\mathrm{tdb}} < 0 \\
 $$
 
 A note related to the implementation: most software treat the calculated $RT \ln(1 + \beta) g(\tau)$ as the magnetic free energy for the formula unit. For per mole atom, the free energy need to divide $N_{\mathrm{atom}}$ the total atom in the formula unit.
+
+## Order disorder phase
+
+Split-CEF is a way to consistently consider disorder phase and ordered phase using the same sublattice model. The main point is that a disordered phase is used for reference and the Gibbs energy of the ordered phase will be enforced so that when the site fraction correspond to disordered case, its gibbs energy will equal to the disordered phase. However, in such case the end-member energy is "ordering energy" and does not correspond to the formation energy (or Gibbs energy) of the end-members.
+
+We first define a reference disordered model $G^{\mathrm{disord}}$, which is usually a disordered solid-solution phase but may also be a CEF model containing $N_d$ sublattices:
+$$
+(s_d,s_2,\ldots,s_{N_d}).
+$$
+The first sublattice, $s_d$, represents the disordered substitutional sites, while the remaining sublattices $(s_2,\ldots,s_{N_d})$ are treated as non-ordering sublattices, such as interstitial sites.
+
+The corresponding ordered phase contains $q$ ordering sublattices and $N_d-1$ non-ordering sublattices:
+$$
+(s_{o1},\ldots,s_{oq},s_2,\ldots,s_{N_d}),
+$$
+where $q\geq 2$. Therefore, the total number of ordered-phase sublattices is
+$$
+N_o=q+N_d-1\geq N_d+1.
+$$
+The sublattice correspondence is defined as
+$$
+\begin{aligned}
+(s_{o1},\ldots,s_{oq}) &\longrightarrow s_d,\\
+s_k^{\mathrm{ord}} &\longrightarrow s_k^{\mathrm{disord}},
+\qquad k=2,\ldots,N_d.
+\end{aligned}
+$$
+The final $N_d-1$ sublattices of the ordered phase must correspond to those of the disordered phase, in the same order, with compatible (same) constituent sets. In practice, we first match the trailing sublattices $s_2,\ldots,s_{N_d}$ in the ordered model and treat the remaining sublattices as $s_{o1},\ldots,s_{oq}$.
+All ordering sublattices must have the same active constituent set as $s_d$. If an ordering sublattice contains only a subset of these constituents, the missing constituents are added to its allowed constituent set before constructing the ordered CEF model. 
+
+If the disordered phase contain non-ordering sublattices, We require also that the ratio of multiplicity between the combined ordering sublattices $\sum_{j=1}^{q}m_{oj}$ and any of the remaining sublattices $m_{ok}$ to be the same as the between $m_d$ and the remaining $m_{dk}$ in the disordered phase, i.e.,
+$$
+\frac{\sum_{j=1}^{q}m_{oj}}{m_{d}}
+=
+\frac{m_{ok}}{m_{dk}},
+\qquad k=2,\ldots,N_d,
+$$
+
+In the split CEF model, we have the following formula for the Gibbs energy per molar atom:
+$$
+\begin{align*}
+G_m^{\mathrm{split}}(\mathbf{y}_{o1},\cdots,\mathbf{y}_{oq},\mathbf{y}_2,\cdots,\mathbf{y}_n) 
+= & c \cdot G_m^{\mathrm{disord}}(\mathbf{y}_d,\mathbf{y}_2,\cdots,\mathbf{y}_n) \\ + 
+& G_m^{\mathrm{ord}}(\mathbf{y}_{o1},\cdots,\mathbf{y}_{oq},\mathbf{y}_2,\cdots,\mathbf{y}_n) \\ - &G_m^{\mathrm{ord}}(\mathbf{y}_{d},\cdots,\mathbf{y}_{d},\mathbf{y}_2,\cdots,\mathbf{y}_n)
+\end{align*}
+$$
+where $\mathbf{y}_d$ is the site fraction of the disordered sublattices, and is used for all the disorder-order sublattices in the last term. For a component $i$:
+$$
+y_{d,i}
+=
+\frac{\sum_{j=1}^{q}m_{oj}y_{oj,i}}
+{\sum_{j=1}^{q}m_{oj}}
+$$
+for each constituent $i$, including vacancies where applicable. The composition of the ordered phase is exactly as the composition of the disordered phase.

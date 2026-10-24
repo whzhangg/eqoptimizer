@@ -18,9 +18,9 @@ optimization:
   # loss
   stable_weight: 1.0                    # Weight of the stable-phase loss.
   unstable_weight: 1.0                  # Weight of the unstable-phase loss.
-  regularization_weight: 1.0e-10        # Weight of squared-parameter regularization.
+  regularization_weight: 5.0e-3        # Weight of squared-parameter regularization.
   regularize_difference: false          # Regularize parameter changes instead of values.
-  loss_threshold: null                  # Early-stopping total loss; null disables it.
+  loss_threshold: 0.5                  # Early-stopping total loss; null disables it.
   use_huber_for_stable_phases: true     # Use Huber loss for stable phases.
   relu_margin: 0.0                      # Required unstable-phase grand-potential margin in J/mol.
   unstable_huber_beta: 1.0              # Unstable-phase Huber transition in J/mol; null is linear.

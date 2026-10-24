@@ -17,6 +17,7 @@ from .cef_parser import (
     get_cef_surface_from_tdb_string,
     get_excess_term_from_tdb_string,
     get_magnetic_parameters_from_tdb_string,
+    get_order_disorder_relations_from_tdb_string,
 )
 from .polynomial import (
     ParameterizedExpression,
@@ -26,6 +27,7 @@ from .polynomial import (
 )
 from .cef_surface import CEFContribution, CEFSurface
 from .magnetic import CEFMagneticContribution, magnetic_free_energy_Inden_Hillert_Jarl
+from .order_disorder import SplitCEF
 
 __all__ = [
     "CEF",
@@ -36,12 +38,14 @@ __all__ = [
     "CEFSurface",
     "CEFMagneticContribution",
     "SymbolicCEFParser",
+    "SplitCEF",
     "EndMemberTerm",
     "get_cef_context_and_contributions_from_tdb_string",
     "get_cef_context_from_tdb_string",
     "get_cef_surface_from_tdb_string",
     "get_excess_term_from_tdb_string",
     "get_magnetic_parameters_from_tdb_string",
+    "get_order_disorder_relations_from_tdb_string",
     "BinaryExcessTerm",
     "TwoSublatticeBinaryExcessTerm",
     "ParameterizedExpression",
