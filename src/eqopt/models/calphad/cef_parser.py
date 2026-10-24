@@ -47,8 +47,8 @@ def _normalize_tdb_sublattice_entry(entry: str) -> tuple[str, ...]:
     """Match pycalphad's TDB normalization: uppercase and sort per sublattice."""
     return tuple(
         sorted(
-            component.strip().upper()
-            for component in entry.split(',')
+            component.strip().rstrip("%").upper()
+            for component in re.split(r'[,\s]+', entry)
             if component.strip()
         )
     )
@@ -62,16 +62,31 @@ def _parse_tdb_parameter_command(
     command: str,
     parameter_name: str,
 ) -> tuple[str, str, int, str] | None:
-    pattern = (
-        rf'PARA(?:METER)?\s+{re.escape(parameter_name)}\(\s*'
+    parameter_pattern = re.escape(parameter_name)
+    if parameter_name.upper() == "G":
+        parameter_pattern = r"(?:G|L)"
+    elif parameter_name.upper() == "BM":
+        parameter_pattern = r"BM(?:AG(?:N)?)?"
+    prefix = (
+        rf'PAR(?:A(?:METER)?)?\s+{parameter_pattern}\(\s*'
         r'([^,\s]+)\s*,\s*'
-        r'(.+?)'
-        r';\s*(\d+)\s*\)\s*'
+        r'(.+?)\s*'
+        r'(?:;\s*(\d+))?\s*\)\s*'
+    )
+    regular_pattern = prefix + (
         r'[-+0-9.Ee]+\s+'
         r'(.+?)'
-        r';\s*[-+0-9.Ee]+\s+[YN]\s*$'
+        r';\s*[-+0-9.Ee]+\s+[YN](?:\s+.*)?$'
     )
-    match = re.match(pattern, command.strip(), flags=re.IGNORECASE | re.DOTALL)
+    shorthand_pattern = prefix + (
+        r',\s*,\s*'
+        r'(.+?)'
+        r';\s*(?:(?:,\s*,)|[-+0-9.Ee]+)\s*[YN](?:\s+.*)?$'
+    )
+    flags = re.IGNORECASE | re.DOTALL
+    match = re.match(regular_pattern, command.strip(), flags=flags)
+    if match is None:
+        match = re.match(shorthand_pattern, command.strip(), flags=flags)
     if not match:
         return None
     site_entries = tuple(
@@ -81,7 +96,7 @@ def _parse_tdb_parameter_command(
     return (
         match.group(1).strip().upper(),
         _site_entries_to_string(site_entries),
-        int(match.group(3)),
+        int(match.group(3) or 0),
         match.group(4),
     )
 
@@ -99,7 +114,8 @@ def _get_cef_context_and_type_symbol(
         upper_command = command.upper()
         if upper_command.startswith('PHASE'):
             tokens = upper_command.split()
-            if len(tokens) >= 4 and tokens[1] == phase_name:
+            command_phase_name = tokens[1].split(":", 1)[0]
+            if len(tokens) >= 4 and command_phase_name == phase_name:
                 symbol = tokens[2]
                 type_symbol = symbol[1:] if symbol.startswith('%') and len(symbol) > 1 else None
                 n_sublattices = int(tokens[3])
@@ -108,13 +124,13 @@ def _get_cef_context_and_type_symbol(
                     for value in tokens[4:4 + n_sublattices]
                 )
 
-        if upper_command.startswith('CONSTITUENT'):
+        if upper_command.startswith(('CONSTITUENT', 'CONST ')):
             match = re.match(
-                r'CONSTITUENT\s+(\s*\S+\s*)\s*:(.*):\s*$',
+                r'CONST(?:ITUENT)?\s+(\s*\S+\s*)\s*:(.*):\s*$',
                 upper_command,
                 flags=re.IGNORECASE | re.DOTALL,
             )
-            if match and match.group(1).strip().upper() == phase_name:
+            if match and match.group(1).strip().upper().split(":", 1)[0] == phase_name:
                 components = tuple(
                     _normalize_tdb_sublattice_entry(sublattice)
                     for sublattice in match.group(2).split(':')
@@ -440,7 +456,7 @@ class SymbolicCEFParser:
         self.tdb_string = self.path.read_text()
         self.initial_parameter_scale = float(initial_parameter_scale)
         self.phase_names = tuple(
-            match.group(1).upper()
+            match.group(1).upper().split(":", 1)[0]
             for command in _tdb_commands(self.tdb_string)
             if (match := re.match(r"PHASE\s+([^\s]+)", command, flags=re.IGNORECASE))
         )

@@ -126,3 +126,91 @@ y_{d,i}
 {\sum_{j=1}^{q}m_{oj}}
 $$
 for each constituent $i$, including vacancies where applicable. The composition of the ordered phase is exactly as the composition of the disordered phase.
+
+## TDB files
+
+`SymbolicCEFParser` reads a restricted subset of the Thermo-Calc TDB format and constructs one
+`CEF` or `SplitCEF` model for each phase. Commands are terminated by `!`, and lines beginning with
+`$` are treated as comments.
+
+### Phase and constituent definitions
+
+Both full and abbreviated constituent commands are accepted:
+
+```text
+PHASE A2_BCC %B 2 1 3 !
+CONSTITUENT A2_BCC : AL,NI,VA : VA : !
+
+PHASE B2_BCC %BO 3 0.5 0.5 3 !
+CONST B2_BCC : AL% NI VA : AL NI% VA : VA : !
+```
+
+Constituents may be separated by commas, whitespace, or both. A `%` suffix marks the preferred
+constituent of a sublattice in a TDB file. It does not constrain its site fraction and is removed
+when the CEF constituent sets are constructed.
+
+A phase option appended to the phase name is also accepted:
+
+```text
+PHASE FCC_4SL:F %AY 5 0.25 0.25 0.25 0.25 1 !
+```
+
+The phase is imported with the name `FCC_4SL`. The option `:F` is currently ignored; in
+particular, symmetry-equivalent parameters implied by the four-sublattice FCC option are not
+generated automatically.
+
+### Parameter definitions
+
+`PARAMETER`, `PARA`, and `PAR` commands are accepted. A parameter may use the regular form:
+
+```text
+PARAMETER G(A2_BCC,AL,NI:VA;0) 298.15 -10000+2*T+a*5000+b*T; 6000 N !
+```
+
+or the abbreviated form commonly found in assessed databases:
+
+```text
+PAR L(A2_BCC,AL,NI:VA;0),, -10000+2*T+a*5000+b*T;,, N 22Yan !
+PAR G(B2_BCC,AL:NI:VA),, -50000+10*T;,, N 22Yan !
+```
+
+The following aliases and omissions are supported:
+
+- `L(...)` is imported as a Gibbs-energy excess term in the same way as `G(...)`.
+- `BM`, `BMAG`, and `BMAGN` are accepted for the magnetic-moment surface.
+- An omitted interaction order is interpreted as order zero.
+- The `,,` shorthand may replace the lower and upper temperature limits.
+- A reference identifier following `N` or `Y` is ignored.
+
+Energy terms may describe endmembers, binary or ternary mixing on one sublattice, or binary
+mixing on two sublattices, as defined in the CEF section above. `TC` and `BM` surfaces are loaded
+when the phase has a matching magnetic type definition.
+
+The temperature expression is represented by `ParameterizedExpression`. `T` denotes temperature,
+while every other free symbol is a trainable parameter. Addition, multiplication, numeric powers,
+`EXP`, and `LN` are supported. For example, `a*5000+b*T` contains the two trainable parameters
+`a` and `b`.
+
+### Order-disorder definitions
+
+The parser recognizes both full and abbreviated order-disorder type definitions:
+
+```text
+TYPE_DEFINITION O GES AMEND_PHASE_DESCRIPTION B2_BCC DISORDERED_PART A2_BCC !
+TYPE-DEF O GES A_P_D B2_BCC DIS_PART A2_BCC !
+```
+
+All parsed phases are cached by phase name. When an ordered phase is requested, its disordered
+reference is constructed first if necessary and the same model object is supplied to `SplitCEF`.
+`SymbolicCEFParser.get_models()` constructs and returns all phases in a dictionary.
+
+### Current limitations
+
+- Named TDB `FUNCTION` expressions are not expanded recursively. A symbol such as `GHSERAL` or
+  `GB2ALNI` would instead be interpreted as a trainable parameter. Such functions must therefore
+  be substituted into the parameter expressions before numerical comparison with pycalphad.
+- Piecewise temperature expressions containing multiple `Y` ranges are not supported.
+- Phase options such as `:F`, `:B`, and `:L` are removed from phase names but their special model
+  behavior is not implemented.
+- Diffusion, ionic-liquid, aqueous, gas, charged-phase, and other specialized TDB models are not
+  interpreted by the CEF parser.

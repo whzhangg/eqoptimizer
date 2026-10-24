@@ -2,7 +2,9 @@
 
 ## 2026-10-24
 
-- added order-disorder model (split-CEF) documented by '/docs/calphad.md'.
+- added order-disorder model (split-CEF) documented in '/docs/calphad.md'.
+
+- improved parser to support different ways to specify the thermodynamic model parameters. This is now also documented in '/docs/calphad.md'.
 
 ## 2026-10-21
 
