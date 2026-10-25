@@ -27,3 +27,11 @@ optimization of EAM potential from desired (simplified) phase equilibria.
 ## Cr-Fe
 
 binary with magnetic contribution. In this case, initial parameters are randomly initialized.
+
+## 08 order disorder (Al-Ni)
+
+binary Al-Ni system
+
+## 09 Pb-Sn
+
+optimization with invariant point
