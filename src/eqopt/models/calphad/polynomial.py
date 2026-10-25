@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Sequence
+from bisect import bisect_right
+from collections.abc import Mapping, Sequence
 
 import sympy
 import torch
@@ -261,29 +262,52 @@ class TempPolynomialwCorrection(TemperatureExpression):
 
 
 class ParameterizedExpression(TemperatureExpression):
-    """Restricted symbolic expression with trainable symbols other than ``T``.
+    """Complete symbolic branch with local parameters and named dependencies.
 
-    exp, log and ln are supported along with polynomial expressions.
-    any parameter other than T will be treated as parameters, assumed to
-    have the same scale. 
+    Exp, log and ln are supported along with polynomial expressions. Symbols
+    other than ``T``, ``P``, and named dependencies are treated as local
+    parameters. Pressure is evaluated at the standard pressure of one bar.
     """
 
-    _runtime_symbol = sympy.Symbol("T")
+    _temperature_symbol = sympy.Symbol("T")
+    _pressure_symbol = sympy.Symbol("P")
+    _runtime_symbols = {_temperature_symbol, _pressure_symbol}
+    _standard_pressure_pa = 1.0e5
     _allowed_functions = {sympy.exp, sympy.log}
     _torch_modules = {
         "exp": torch.exp,
         "log": torch.log,
     }
 
-    def __init__(self, expression: str, initial_parameter_scale: float = 0.1):
+    def __init__(
+        self,
+        expression: str,
+        initial_parameter_scale: float = 0.1,
+        *,
+        dependencies: Mapping[str, "PiecewiseParameterizedExpression"] | None = None,
+    ):
         super().__init__()
         self.expression = self._parse_expression(expression)
+        dependencies = dependencies or {}
+        self.dependencies = torch.nn.ModuleDict(dependencies)
+        self.dependency_symbols = tuple(
+            sorted(
+                (
+                    symbol
+                    for symbol in self.expression.free_symbols
+                    if str(symbol) in dependencies
+                ),
+                key=str,
+            )
+        )
+        self.dependency_names = tuple(str(symbol) for symbol in self.dependency_symbols)
         self.parameter_symbols = tuple(
             sorted(
                 (
                     symbol
                     for symbol in self.expression.free_symbols
-                    if symbol != self._runtime_symbol
+                    if symbol not in self._runtime_symbols
+                    and symbol not in self.dependency_symbols
                 ),
                 key=str,
             )
@@ -305,8 +329,14 @@ class ParameterizedExpression(TemperatureExpression):
         cls,
         expression: str,
         initial_parameter_scale: float = 0.1,
+        *,
+        dependencies: Mapping[str, "PiecewiseParameterizedExpression"] | None = None,
     ) -> "ParameterizedExpression":
-        return cls(expression, initial_parameter_scale=initial_parameter_scale)
+        return cls(
+            expression,
+            initial_parameter_scale=initial_parameter_scale,
+            dependencies=dependencies,
+        )
 
 
     @classmethod
@@ -317,7 +347,8 @@ class ParameterizedExpression(TemperatureExpression):
         parsed = sympy.sympify(
             expression,
             locals={
-                "T": cls._runtime_symbol,
+                "T": cls._temperature_symbol,
+                "P": cls._pressure_symbol,
                 "exp": sympy.exp,
                 "EXP": sympy.exp,
                 "ln": sympy.log,
@@ -352,19 +383,56 @@ class ParameterizedExpression(TemperatureExpression):
         )
 
 
+    @classmethod
+    def symbol_names(cls, expression: str) -> tuple[str, ...]:
+        parsed = cls._parse_expression(expression)
+        return tuple(
+            sorted(
+                str(symbol)
+                for symbol in parsed.free_symbols
+                if symbol not in cls._runtime_symbols
+            )
+        )
+
+
     def g(self, temperature) -> torch.Tensor:
-        temperature = scalar_temperature(temperature)
+        return self._evaluate(scalar_temperature(temperature), {})
+
+
+    def _evaluate(
+        self,
+        temperature: torch.Tensor,
+        cache: dict[int, torch.Tensor],
+    ) -> torch.Tensor:
+        key = id(self)
+        if key in cache:
+            return cache[key]
         if self._function is None:
             self._compile_function()
-        value = self._function(*self.theta.unbind(), temperature)
-        if isinstance(value, torch.Tensor):
-            return value
-        return temperature.new_tensor(value)
+        dependency_values = [
+            self.dependencies[name]._evaluate(temperature, cache)
+            for name in self.dependency_names
+        ]
+        value = self._function(
+            *self.theta.unbind(),
+            *dependency_values,
+            temperature,
+            temperature.new_tensor(self._standard_pressure_pa),
+        )
+        if not isinstance(value, torch.Tensor):
+            value = temperature.new_tensor(value)
+        cache[key] = value
+        return value
 
 
     def _compile_function(self) -> None:
         self._function = sympy.lambdify(
-            (*self.parameter_symbols, self._runtime_symbol),
+            (
+                *self.parameter_symbols,
+                *self.dependency_symbols,
+                self._temperature_symbol,
+                self._pressure_symbol,
+            ),
             self.expression,
             modules=[self._torch_modules, "math"],
         )
@@ -377,11 +445,57 @@ class ParameterizedExpression(TemperatureExpression):
 
 
     def get_expression(self) -> str:
-        substitutions = {
+        symbol_substitutions = {
             symbol: sympy.Float(float(parameter.detach().cpu()), 16)
             for symbol, parameter in zip(self.parameter_symbols, self.theta)
         }
-        expression = sympy.sstr(self.expression.subs(substitutions))
+        expression = sympy.sstr(self.expression.subs(symbol_substitutions))
         return expression.replace("log(", "LN(").replace("exp(", "EXP(")
 
-        
+
+class PiecewiseParameterizedExpression(TemperatureExpression):
+    """Select a complete parameterized expression by temperature interval."""
+
+    def __init__(
+        self,
+        segments: Sequence[tuple[float, ParameterizedExpression]],
+    ):
+        super().__init__()
+        self.lower_temperatures = tuple(
+            0.0 if index == 0 else float(lower_temperature)
+            for index, (lower_temperature, _) in enumerate(segments)
+        )
+        self.segments = torch.nn.ModuleList([segment for _, segment in segments])
+
+
+    def g(self, temperature) -> torch.Tensor:
+        return self._evaluate(scalar_temperature(temperature), {})
+
+
+    def _evaluate(
+        self,
+        temperature: torch.Tensor,
+        cache: dict[int, torch.Tensor],
+    ) -> torch.Tensor:
+        key = id(self)
+        if key in cache:
+            return cache[key]
+
+        segment_index = bisect_right(
+            self.lower_temperatures,
+            float(temperature.detach().cpu()),
+        ) - 1
+        segment = self.segments[segment_index]
+        value = segment._evaluate(temperature, cache)
+        cache[key] = value
+        return value
+
+
+    def get_expression(self) -> str:
+        parts = [self.segments[0].get_expression()]
+        for lower_temperature, segment in zip(
+            self.lower_temperatures[1:],
+            self.segments[1:],
+        ):
+            parts.append(f"{lower_temperature:g} Y {segment.get_expression()}")
+        return "; ".join(parts)

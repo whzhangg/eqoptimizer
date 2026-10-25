@@ -6,6 +6,10 @@
 
 - improved parser to support different ways to specify the thermodynamic model parameters. This is now also documented in '/docs/calphad.md'.
 
+## 2026-10-25
+
+- recursive parsing of the TDB file supporting FUNCTIONs as individual Module with parameter and reuse of FUNCTION in other expressions. Temperature segment is also supported
+
 ## 2026-10-21
 
 ### Code changes

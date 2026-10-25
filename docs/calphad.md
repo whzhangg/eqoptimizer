@@ -131,7 +131,8 @@ for each constituent $i$, including vacancies where applicable. The composition 
 
 `SymbolicCEFParser` reads a restricted subset of the Thermo-Calc TDB format and constructs one
 `CEF` or `SplitCEF` model for each phase. Commands are terminated by `!`, and lines beginning with
-`$` are treated as comments.
+`$` are treated as comments. Inline `$` comments, including references following a command-ending
+`!`, are also removed.
 
 ### Phase and constituent definitions
 
@@ -158,6 +159,9 @@ PHASE FCC_4SL:F %AY 5 0.25 0.25 0.25 0.25 1 !
 The phase is imported with the name `FCC_4SL`. The option `:F` is currently ignored; in
 particular, symmetry-equivalent parameters implied by the four-sublattice FCC option are not
 generated automatically.
+
+The phase data-type field is interpreted as a sequence of one-character codes. For example,
+`%BO` applies the `%`, `B`, and `O` type definitions independently.
 
 ### Parameter definitions
 
@@ -186,10 +190,50 @@ Energy terms may describe endmembers, binary or ternary mixing on one sublattice
 mixing on two sublattices, as defined in the CEF section above. `TC` and `BM` surfaces are loaded
 when the phase has a matching magnetic type definition.
 
-The temperature expression is represented by `ParameterizedExpression`. `T` denotes temperature,
-while every other free symbol is a trainable parameter. Addition, multiplication, numeric powers,
-`EXP`, and `LN` are supported. For example, `a*5000+b*T` contains the two trainable parameters
-`a` and `b`.
+Each temperature branch is represented by a `ParameterizedExpression`. `T` denotes temperature
+and `P` denotes the fixed standard pressure of one bar. Symbols matching named TDB functions are
+dependencies, and every remaining free symbol is a local trainable parameter. Addition,
+multiplication, numeric powers, `EXP`, `LN`, and `LOG` are supported. For example,
+`GHSERAL+a*5000+b*T` depends on `GHSERAL` and contains the two trainable parameters `a` and `b`.
+
+### Functions and temperature intervals
+
+Both `FUNCTION` and abbreviated `FUN` commands are accepted. A function may contain several
+temperature branches:
+
+```text
+FUNCTION GHSERAL 298.15 expression_1;
+    700 Y expression_2;
+    933.47 Y expression_3;
+    2900 N !
+```
+
+The same piecewise syntax is accepted for parameter expressions. The first expression applies
+below the first `Y` breakpoint, each subsequent expression becomes active at its preceding
+breakpoint, and the final `temperature N` entry terminates the definition without introducing an
+additional expression. The implementation extrapolates the first branch down to 0 K and the last
+branch above the final stated temperature. The original outer validity limits are therefore not
+enforced during evaluation. The `,,` shorthand similarly creates a branch without finite outer
+validity limits.
+
+Named functions may refer recursively to other named functions:
+
+```text
+FUNCTION GHSERAL 298.15 expression; 2900 N !
+FUNCTION GLIQAL 298.15 GHSERAL+11005.045-11.84185*T; 2900 N !
+PARAMETER G(LIQUID,AL;0) 298.15 GLIQAL; 2900 N !
+```
+
+The optional TDB invocation marker `#`, as in `GHSERAL#`, is removed before the symbolic
+expression is parsed. Each named function is constructed once and shared by all functions and
+parameters that reference it. Recursive evaluation uses a cache local to one top-level `g()` call,
+so a shared dependency is evaluated only once without retaining an autograd graph between calls.
+Cyclic function dependencies raise an error.
+
+`PiecewiseParameterizedExpression` only selects the active branch. Each branch is a complete
+`ParameterizedExpression` that owns its local trainable parameters and references its named
+function dependencies. Consequently, identically named free symbols in separate temperature
+branches are independent parameters; named functions remain shared objects.
 
 ### Order-disorder definitions
 
@@ -206,10 +250,8 @@ reference is constructed first if necessary and the same model object is supplie
 
 ### Current limitations
 
-- Named TDB `FUNCTION` expressions are not expanded recursively. A symbol such as `GHSERAL` or
-  `GB2ALNI` would instead be interpreted as a trainable parameter. Such functions must therefore
-  be substituted into the parameter expressions before numerical comparison with pycalphad.
-- Piecewise temperature expressions containing multiple `Y` ranges are not supported.
+- Pressure-dependent intervals indicated by a negative initial limit are not interpreted. Expressions
+  containing `P` are evaluated at one bar.
 - Phase options such as `:F`, `:B`, and `:L` are removed from phase names but their special model
   behavior is not implemented.
 - Diffusion, ionic-liquid, aqueous, gas, charged-phase, and other specialized TDB models are not

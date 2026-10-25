@@ -21,6 +21,7 @@ from .cef_parser import (
 )
 from .polynomial import (
     ParameterizedExpression,
+    PiecewiseParameterizedExpression,
     TemperatureExpression,
     TempPolynomial,
     TempPolynomialwCorrection,
@@ -49,6 +50,7 @@ __all__ = [
     "BinaryExcessTerm",
     "TwoSublatticeBinaryExcessTerm",
     "ParameterizedExpression",
+    "PiecewiseParameterizedExpression",
     "TemperatureExpression",
     "TempPolynomial",
     "TempPolynomialwCorrection",

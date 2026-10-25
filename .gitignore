@@ -26,3 +26,4 @@ manuscript
 
 src/potentials/meam
 src/*.egg-info
+docs/*.pdf
