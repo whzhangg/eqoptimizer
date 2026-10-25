@@ -320,6 +320,20 @@ class ParameterizedExpression(TemperatureExpression):
                 dtype=DEFAULT_TYPE,
             ) * initial_parameter_scale
         )
+        # determine if cache the result
+        # if there is trainable parameter that determine the value 
+        # of this expression, it's value at given temperature is
+        # cached.
+        self.cache_enabled = (
+            self.theta.numel() == 0
+            and all(
+                dependency.is_parameter_independent
+                for dependency in self.dependencies.values()
+            )
+        )
+        self._value_cache: dict[
+            tuple[float, torch.device, torch.dtype], torch.Tensor
+        ] = {}
         self._function = None
         self._compile_function()
 
@@ -407,6 +421,17 @@ class ParameterizedExpression(TemperatureExpression):
         key = id(self)
         if key in cache:
             return cache[key]
+        value_cache_key = None
+        if self.cache_enabled:
+            value_cache_key = (
+                float(temperature.detach().cpu()),
+                temperature.device,
+                temperature.dtype,
+            )
+            if value_cache_key in self._value_cache:
+                value = self._value_cache[value_cache_key]
+                cache[key] = value
+                return value
         if self._function is None:
             self._compile_function()
         dependency_values = [
@@ -421,6 +446,9 @@ class ParameterizedExpression(TemperatureExpression):
         )
         if not isinstance(value, torch.Tensor):
             value = temperature.new_tensor(value)
+        if value_cache_key is not None:
+            value = value.detach()
+            self._value_cache[value_cache_key] = value
         cache[key] = value
         return value
 
@@ -441,6 +469,7 @@ class ParameterizedExpression(TemperatureExpression):
     def __getstate__(self):
         state = super().__getstate__()
         state["_function"] = None
+        state["_value_cache"] = {}
         return state
 
 
@@ -466,6 +495,11 @@ class PiecewiseParameterizedExpression(TemperatureExpression):
             for index, (lower_temperature, _) in enumerate(segments)
         )
         self.segments = torch.nn.ModuleList([segment for _, segment in segments])
+
+
+    @property
+    def is_parameter_independent(self) -> bool:
+        return all(segment.cache_enabled for segment in self.segments)
 
 
     def g(self, temperature) -> torch.Tensor:
