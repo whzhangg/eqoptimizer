@@ -35,7 +35,8 @@ _CORRECTION_PHYSICAL_SCALES = {
 
 @dataclasses.dataclass(frozen=True)
 class _ParsedPiecewiseExpression:
-    segments: tuple[tuple[float, str], ...]
+    segments: tuple[tuple[float | None, str], ...]
+    upper_temperature: float | None
 
 
 
@@ -352,7 +353,8 @@ class SymbolicCEFParser:
                     ),
                 )
                 for lower_temperature, segment_expression in expression.segments
-            ]
+            ],
+            upper_temperature=expression.upper_temperature,
         )
 
 
@@ -562,7 +564,7 @@ def _parse_piecewise_expression(text: str) -> _ParsedPiecewiseExpression:
 
     # first part, eg, 298.5 a+bT
     if first_part.startswith(',,'):
-        first_temperature = 0.0
+        first_temperature = None
         first_expression = first_part[2:].strip()
     else:
         first_match = re.match(
@@ -592,15 +594,19 @@ def _parse_piecewise_expression(text: str) -> _ParsedPiecewiseExpression:
     final_part = parts[-1]
     if final_part.startswith(',,'):
         final_match = re.match(r',\s*,\s*N(?:\s+.*)?$', final_part, re.IGNORECASE)
+        upper_temperature = None
     else:
         final_match = re.match(
             rf'({number})\s+N(?:\s+.*)?$',
             final_part,
             flags=re.IGNORECASE,
         )
+        upper_temperature = (
+            None if final_match is None else float(final_match.group(1))
+        )
     if final_match is None:
         raise ValueError(f"Invalid final TDB temperature interval: {final_part}")
-    return _ParsedPiecewiseExpression(tuple(segments))
+    return _ParsedPiecewiseExpression(tuple(segments), upper_temperature)
 
 
 def _single_expression(expression: _ParsedPiecewiseExpression) -> str:

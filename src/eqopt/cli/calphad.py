@@ -56,16 +56,24 @@ def _optimized_tdb_string(
     retained_commands = []
     for command in _tdb_commands(parser.tdb_string):
         upper_command = command.upper()
-        if upper_command.startswith(("PARAMETER", "PARA ", "PAR ")):
+        if upper_command.startswith(("PARAMETER", "PARA ", "PAR ", "FUNCTION", "FUN ")):
             continue
         retained_commands.append(f"{command} !")
+    function_commands = [
+        f"FUNCTION {name} {function.get_tdb_expression()} !"
+        for name, function in parser.functions.items()
+    ]
     parameter_commands = [
         command
         for phase_id in system.phase_ids
         for command in _tdb_commands(system.get_model_by_phase_id(phase_id).get_tdb_str())
         if command.upper().startswith(("PARAMETER", "PARA ", "PAR "))
     ]
-    commands = (*retained_commands, *(f"{command} !" for command in parameter_commands))
+    commands = (
+        *retained_commands,
+        *function_commands,
+        *(f"{command} !" for command in parameter_commands),
+    )
     return "\n".join(commands) + "\n"
 
 

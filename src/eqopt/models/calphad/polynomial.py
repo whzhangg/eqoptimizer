@@ -26,6 +26,11 @@ class TemperatureExpression(torch.nn.Module, ABC):
         """Return the current expression with trainable values substituted."""
 
 
+    def get_tdb_expression(self) -> str:
+        """Return a complete, single-interval TDB temperature expression."""
+        return f"10.0 {self.get_expression()}; 6000 N"
+
+
 class TempPolynomial(TemperatureExpression):
     """a temperature polynomial"""
     def __init__(self, 
@@ -487,12 +492,20 @@ class PiecewiseParameterizedExpression(TemperatureExpression):
 
     def __init__(
         self,
-        segments: Sequence[tuple[float, ParameterizedExpression]],
+        segments: Sequence[tuple[float | None, ParameterizedExpression]],
+        upper_temperature: float | None,
     ):
         super().__init__()
         self.lower_temperatures = tuple(
-            0.0 if index == 0 else float(lower_temperature)
-            for index, (lower_temperature, _) in enumerate(segments)
+            None if lower_temperature is None else float(lower_temperature)
+            for lower_temperature, _ in segments
+        )
+        self.upper_temperature = (
+            None if upper_temperature is None else float(upper_temperature)
+        )
+        self._evaluation_lower_temperatures = (
+            0.0,
+            *(float(value) for value in self.lower_temperatures[1:]),
         )
         self.segments = torch.nn.ModuleList([segment for _, segment in segments])
 
@@ -516,7 +529,7 @@ class PiecewiseParameterizedExpression(TemperatureExpression):
             return cache[key]
 
         segment_index = bisect_right(
-            self.lower_temperatures,
+            self._evaluation_lower_temperatures,
             float(temperature.detach().cpu()),
         ) - 1
         segment = self.segments[segment_index]
@@ -533,3 +546,22 @@ class PiecewiseParameterizedExpression(TemperatureExpression):
         ):
             parts.append(f"{lower_temperature:g} Y {segment.get_expression()}")
         return "; ".join(parts)
+
+
+    def get_tdb_expression(self) -> str:
+        first_lower = _format_tdb_temperature_bound(self.lower_temperatures[0])
+        parts = [f"{first_lower} {self.segments[0].get_expression()}"]
+        for lower_temperature, segment in zip(
+            self.lower_temperatures[1:],
+            self.segments[1:],
+            strict=True,
+        ):
+            lower = _format_tdb_temperature_bound(lower_temperature)
+            parts.append(f"{lower} Y {segment.get_expression()}")
+        upper = _format_tdb_temperature_bound(self.upper_temperature)
+        parts.append(f"{upper} N")
+        return "; ".join(parts)
+
+
+def _format_tdb_temperature_bound(value: float | None) -> str:
+    return ",," if value is None else f"{value:g}"

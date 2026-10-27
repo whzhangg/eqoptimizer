@@ -162,7 +162,7 @@ def _tdb_parameter_str(
 ) -> str:
     return (
         f"parameter {parameter_name}({phase_name},{site_array};{order}) "
-        f"10.0  {interaction.get_expression()} ; 6000 N !"
+        f"{interaction.get_tdb_expression()} !"
     )
 
 
