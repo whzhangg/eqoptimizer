@@ -25,6 +25,13 @@ from .cef_terms import CEFContext
 
 @dataclasses.dataclass
 class CEFCache:
+    """Transient CEF solver state.
+
+    Gibbs and grand-potential evaluations use separate instances because Gibbs
+    caches are composition-specific, while one grand-potential cache is shared
+    by each unique phase within an equilibrium calculation.
+    """
+
     gibbs_base_y: torch.Tensor | None = None
     gibbs_live_y: torch.Tensor | None = None
     gibbs_eta_factor: float = 1.0

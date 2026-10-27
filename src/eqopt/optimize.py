@@ -110,7 +110,10 @@ def _save_equilibrium_states_without_runtime_data(
     them to None
     """
     runtime_data_by_index = [
-        getattr(eq_state, "runtime_data", None)
+        (
+            eq_state.gibbs_runtime_data,
+            eq_state.grand_potential_runtime_data,
+        )
         for eq_state in equilibrium_states
     ]
     try:
@@ -123,7 +126,10 @@ def _save_equilibrium_states_without_runtime_data(
             runtime_data_by_index,
             strict=True,
         ):
-            eq_state.runtime_data = runtime_data
+            (
+                eq_state.gibbs_runtime_data,
+                eq_state.grand_potential_runtime_data,
+            ) = runtime_data
 
 
 def _aggregate_loss_parts(

@@ -55,6 +55,11 @@ class ThermodynamicSystem(nn.Module, ABC):
         """Prepare system state before a fresh loss evaluation."""
         return None
 
+
+    @abstractmethod
+    def create_runtime_data_for_phase(self, phase_id: PhaseID) -> Any:
+        """Return model-specific transient data for one phase evaluation slot."""
+
     
     def forward(
         self,

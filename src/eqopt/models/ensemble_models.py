@@ -1,4 +1,4 @@
-from collections.abc import Collection, MutableMapping, Mapping, Sequence
+from collections.abc import Collection, Mapping
 from typing import Any
 from pathlib import Path
 from torch import Tensor
@@ -52,6 +52,10 @@ class EnsembleSystem(ThermodynamicSystem):
             model.prepare_for_loss()
 
 
+    def create_runtime_data_for_phase(self, phase_id: PhaseID) -> Any:
+        return self.get_model_by_phase_id(phase_id).create_runtime_data()
+
+
     def _get_phase_key(self, phase_id: PhaseID) -> str:
         try:
             return self._phase_id_to_key[phase_id]
@@ -78,8 +82,7 @@ class EnsembleSystem(ThermodynamicSystem):
     ) -> Tensor:
         """Return molar Gibbs energy at imposed composition and temperature."""
         model = self.key_to_model[self._get_phase_key(phase_id)]
-        data = self._runtime_data_for_phase(model, runtime_data, phase_id)
-        return model.gibbs_energy_per_molar_atom(comp, temperature, data)
+        return model.gibbs_energy_per_molar_atom(comp, temperature, runtime_data)
 
 
     def grand_potential_per_molar_atom_for_phase(self,
@@ -89,23 +92,7 @@ class EnsembleSystem(ThermodynamicSystem):
         runtime_data: Any = None,
     ) -> Tensor:
         model = self.key_to_model[self._get_phase_key(phase_id)]
-        data = self._runtime_data_for_phase(model, runtime_data, phase_id)
-        return model.grand_potential_per_molar_atom(mu, temperature, data)
-
-
-    @staticmethod
-    def _runtime_data_for_phase(
-        model: ThermodynamicModel,
-        runtime_data: Any,
-        phase_id: PhaseID,
-    ) -> Any:
-        if runtime_data is None:
-            return None
-        if not isinstance(runtime_data, MutableMapping):
-            raise TypeError("runtime_data must be a mutable mapping or None.")
-        if phase_id not in runtime_data:
-            runtime_data[phase_id] = model.create_runtime_data()
-        return runtime_data[phase_id]
+        return model.grand_potential_per_molar_atom(mu, temperature, runtime_data)
 
 
     def save_model_to_pt(self, path: str | Path) -> None:

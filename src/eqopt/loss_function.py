@@ -116,16 +116,42 @@ class PhaseEquilibriumOptState(torch.nn.Module):
             torch.nn.init.zeros_(self.mu)
         else:
             self.register_parameter("mu", None)
-        self.runtime_data: dict[PhaseID, Any] | None = None # initialized on first evaluation
+        # Gibbs caches are associated with observed phase occurrences because
+        # their internal coordinates depend on the imposed composition. Grand-
+        # potential caches are associated with unique competing phases because
+        # grand potential depends only on the phase, temperature, and mu.
+        self.gibbs_runtime_data: tuple[Any, ...] | None = None
+        self.grand_potential_runtime_data: tuple[Any, ...] | None = None
 
 
-    def get_runtime_data(self) -> dict:
-        if self.runtime_data is None:
-            self.runtime_data = {}
-        return self.runtime_data
+    def get_gibbs_runtime_data(
+        self,
+        system: ThermodynamicSystem,
+    ) -> tuple[Any, ...]:
+        if self.gibbs_runtime_data is None:
+            self.gibbs_runtime_data = tuple(
+                system.create_runtime_data_for_phase(self.equilibrium.phases[index])
+                for index in self.known_phase_indices
+            )
+        return self.gibbs_runtime_data
+
+
+    def get_grand_potential_runtime_data(
+        self,
+        system: ThermodynamicSystem,
+        phases: Sequence[PhaseID],
+    ) -> tuple[Any, ...]:
+        if self.grand_potential_runtime_data is None:
+            self.grand_potential_runtime_data = tuple(
+                system.create_runtime_data_for_phase(phase)
+                for phase in phases
+            )
+        return self.grand_potential_runtime_data
+
 
     def clear_runtime_data(self) -> None:
-        self.runtime_data = None
+        self.gibbs_runtime_data = None
+        self.grand_potential_runtime_data = None
 
 
     def _select_mu_strategy(self, mu_strategy: str) -> str:
@@ -197,7 +223,8 @@ class PhaseEquilibriumOptState(torch.nn.Module):
 
     def _stable_gibbs_vector(self, system: ThermodynamicSystem) -> torch.Tensor:
         values = []
-        for index in self.known_phase_indices:
+        runtime_data = self.get_gibbs_runtime_data(system)
+        for index, cache in zip(self.known_phase_indices, runtime_data, strict=True):
             phase = self.equilibrium.phases[index]
             composition = self.equilibrium.phase_compositions[index]
             values.append(
@@ -205,7 +232,7 @@ class PhaseEquilibriumOptState(torch.nn.Module):
                     phase,
                     composition,
                     self.equilibrium.temperature,
-                    self.get_runtime_data(),
+                    cache,
                 ).reshape(())
             )
         if not values:
@@ -425,14 +452,15 @@ def phase_equilibrium_loss_parts(
     mu_dict = state.current_mu_dict(system)
 
     phases_to_evaluate = tuple(system.get_competing_phases(state.elements))
+    runtime_data = state.get_grand_potential_runtime_data(system, phases_to_evaluate)
     phi_by_id = {
         phase: system.get_grand_potential(
             phase,
             mu_dict,
             temperature,
-            state.get_runtime_data(),
+            cache,
         )
-        for phase in phases_to_evaluate
+        for phase, cache in zip(phases_to_evaluate, runtime_data, strict=True)
     }
 
     phi_observed = [
@@ -514,14 +542,15 @@ def phase_equilibrium_loss_parts_with_stable_gibbs(
     mu_dict = state.mu_dict_from_gibbs(stable_gibbs_vector)
 
     phases_to_evaluate = tuple(system.get_competing_phases(state.elements))
+    runtime_data = state.get_grand_potential_runtime_data(system, phases_to_evaluate)
     phi_by_id = {
         phase: system.get_grand_potential(
             phase,
             mu_dict,
             temperature,
-            state.get_runtime_data(),
+            cache,
         )
-        for phase in phases_to_evaluate
+        for phase, cache in zip(phases_to_evaluate, runtime_data, strict=True)
     }
 
     phi_observed = [
