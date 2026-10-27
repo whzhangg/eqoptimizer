@@ -5,7 +5,12 @@ from typing import Sequence, Mapping
 import numpy as np
 import dataclasses
 
-from ...utilities import R, multi_simplex_samples_dirichlet, hit_and_run_sampling
+from ...utilities import (
+    R,
+    hit_and_run_sampling,
+    multi_simplex_samples_dirichlet,
+    multi_simplex_samples_grid,
+)
 from ...dtype import DEFAULT_DEVICE, DEFAULT_TYPE
 from ..shared import (
     get_tensor_mu,
@@ -31,19 +36,22 @@ class CEFCache:
 class CEFConfig:
     """Default external-facing numerical options for CEF evaluations."""
 
-    # shared sampling/min-pooling options
-    n_samples: int = 64                         # base sample count/density
-    n_samples_cached: int = 4                   # live points cached after minimization
+    # shared minimum-pooling options
     use_softmin: bool = True                    # pool sampled minima with softmin
     softmin_tau: float | None = None            # softmin temperature; auto if None
     eps: float = 1.0e-8                         # numerical floor for divisions/logs
 
     # grand-potential options
+    grand_potential_grid_q: int | None = 2       # interior simplex-grid resolution
+    grand_potential_n_dirichlet_samples_per_dof: int = 16  # random samples per DOF
+    grand_potential_n_cached_samples: int = 4    # retained live minima
     grand_potential_steps: int = 6              # EGD steps for grand potential
     grand_potential_delta: float = 0.3          # target simplex step size
     max_step_factor: float = 1.5                # shrink step if update exceeds this
 
     # fixed-composition Gibbs-energy options
+    gibbs_energy_n_samples_per_dof: int = 16     # feasible samples per DOF
+    gibbs_energy_n_cached_samples: int = 4       # retained feasible minima
     gibbs_energy_steps: int = 6                 # constrained EGD steps for Gibbs energy
     gibbs_energy_delta: float = 0.3             # target constrained primal step size
     gibbs_energy_max_logit_step: float | None = 3.0  # cap primal logit change
@@ -250,17 +258,23 @@ class CEF(ThermodynamicModel):
         temperature: float,
         runtime_data: CEFCache = None,
     ):
+        n_dirichlet_samples = max(
+            self._n_internal_dof()
+            * self.config.grand_potential_n_dirichlet_samples_per_dof,
+            1,
+        )
         return self._grand_potential_by_EGD(
             mu=mu,
             temperature=temperature,
             cache=runtime_data,
-            n_samples_each_side=self.config.n_samples,
+            n_dirichlet_samples=n_dirichlet_samples,
+            grid_q=self.config.grand_potential_grid_q,
             n_steps=self.config.grand_potential_steps,
             use_softmin=self.config.use_softmin,
             delta=self.config.grand_potential_delta,
             tau=self.config.softmin_tau,
             max_step_factor=self.config.max_step_factor,
-            n_live_y=self.config.n_samples_cached,
+            n_cached_samples=self.config.grand_potential_n_cached_samples,
             eps=self.config.eps
         )
 
@@ -268,7 +282,8 @@ class CEF(ThermodynamicModel):
     def sample_internal_dof_at_composition(
         self,
         composition: Mapping[str, float],
-        nsamples: int,
+        n_samples_per_dof: int,
+        active_composition_tol: float,
     ) -> torch.Tensor:
         """Sample site fractions satisfying sublattice and composition constraints."""
         device = self.multi_for_each_y.device
@@ -281,37 +296,22 @@ class CEF(ThermodynamicModel):
         target_x = target_x.clamp_min(1.0e-12)
         target_x = target_x / target_x.sum().clamp_min(1.0e-12)
 
-        n_sublattice = len(self.sublattice_multiplicities)
-        n_total_multiplicity = sum(self.sublattice_multiplicities)
-        ncols = len(self.y_names)
-        nrows = len(self.sublattice_multiplicities) + len(self.elements) - 1
-        c_matrix = torch.zeros((nrows, ncols), device=device, dtype=dtype)
-        d_matrix = torch.zeros((nrows), device=device, dtype=dtype)
-
-        d_matrix[0:len(self.sublattice_multiplicities)] = 1.0
-        ele_index = {}
-        for iele, ele in enumerate(self.elements[:-1]):
-            d_matrix[n_sublattice+iele] = target_x[iele] * n_total_multiplicity
-            ele_index[ele] = iele
-
-        for (comp, isub), yindex in self.context.y_names_to_index.items():
-            c_matrix[isub, yindex] = 1.0
-            if comp in ele_index:
-                c_matrix[n_sublattice+ele_index[comp], yindex] \
-                    = self.sublattice_multiplicities[isub]
-            elif comp.upper() == 'VA':
-                for ele in self.elements[:-1]:
-                    c_matrix[n_sublattice+ele_index[ele], yindex] = (
-                        self.sublattice_multiplicities[isub]
-                        * target_x[ele_index[ele]]
-                    )
+        c_matrix, d_matrix = self._linear_constraints_for_target_x(target_x)
+        active_y_mask, _ = self._active_internal_dof_mask(
+            target_x,
+            active_tol=active_composition_tol,
+        )
+        active_constraint_matrix = c_matrix[:, active_y_mask]
+        constraint_rank = int(torch.linalg.matrix_rank(active_constraint_matrix).item())
+        n_dof = int(active_y_mask.sum().item()) - constraint_rank
+        n_samples = max(n_samples_per_dof * n_dof, 1)
 
         return hit_and_run_sampling(
             c_matrix,
             d_matrix,
-            n_samples_final=nsamples,
+            n_samples_final=n_samples,
             reduce_by_fps=True,
-            n_samples_to_sample=nsamples*10
+            n_samples_to_sample=n_samples * 10,
         )
 
 
@@ -560,24 +560,32 @@ class CEF(ThermodynamicModel):
         )
 
 
+    def _n_internal_dof(self) -> int:
+        return sum(
+            n_components - 1
+            for n_components in self.ncomp_for_each_sublattice
+        )
+
+
     # EGD solver ############################
 
     def _grand_potential_by_EGD(self,
         mu: Mapping[str, float],
         temperature: float,
         cache: CEFCache | None,
-        n_samples_each_side: int,
+        n_dirichlet_samples: int,
+        grid_q: int | None,
         n_steps: int,
         use_softmin: bool,
         delta: float,
         tau: float | None,
         max_step_factor: int,
-        n_live_y: int,
+        n_cached_samples: int,
         eps: float
     ) -> torch.Tensor:
         """solve grand potential
 
-        1) do a sampling according to n_samples_each_side
+        1) combine an interior grid with joint Dirichlet samples
         2) for all points, perform exponential gradient descent for k steps
         3) from the final result, do a softmin
 
@@ -591,10 +599,25 @@ class CEF(ThermodynamicModel):
         if cache is not None and cache.grand_potential_base_y is not None:
             base_y = cache.grand_potential_base_y
         else:
-            base_y = multi_simplex_samples_dirichlet(
-                self.ncomp_for_each_sublattice,
-                n_samples_each_side,
-            ).to(device=self.multi_for_each_y.device, dtype=self.multi_for_each_y.dtype)
+            base_parts = []
+            if grid_q is not None:
+                base_parts.append(
+                    multi_simplex_samples_grid(
+                        self.ncomp_for_each_sublattice,
+                        grid_q,
+                    )
+                )
+            if n_dirichlet_samples > 0:
+                base_parts.append(
+                    multi_simplex_samples_dirichlet(
+                        self.ncomp_for_each_sublattice,
+                        n_dirichlet_samples,
+                    )
+                )
+            base_y = torch.cat(base_parts, dim=0).to(
+                device=self.multi_for_each_y.device,
+                dtype=self.multi_for_each_y.dtype,
+            )
             if cache is not None:
                 cache.grand_potential_base_y = base_y.detach()
 
@@ -620,8 +643,8 @@ class CEF(ThermodynamicModel):
                 mu,
                 temperature,
             )
-            if cache is not None and int(n_live_y) > 0:
-                k = min(int(n_live_y), sampled_y.shape[0])
+            if cache is not None and int(n_cached_samples) > 0:
+                k = min(int(n_cached_samples), sampled_y.shape[0])
                 indices = torch.topk(values.detach(), k=k, largest=False).indices
                 cache.grand_potential_live_y = sampled_y.detach()[indices]
             if use_softmin:
@@ -701,8 +724,8 @@ class CEF(ThermodynamicModel):
             mu,
             temperature,
         )
-        if cache is not None and int(n_live_y) > 0:
-            k = min(int(n_live_y), pooled_y.shape[0])
+        if cache is not None and int(n_cached_samples) > 0:
+            k = min(int(n_cached_samples), pooled_y.shape[0])
             indices = torch.topk(values.detach(), k=k, largest=False).indices
             cache.grand_potential_live_y = pooled_y.detach()[indices]
 
@@ -727,7 +750,6 @@ class CEF(ThermodynamicModel):
         flow to thermodynamic parameters, but not through the internal solver.
         """
         temperature = scalar_temperature(temperature)
-        n_samples = self.config.n_samples
         tau = self.config.softmin_tau
         use_softmin = self.config.use_softmin
         if sampled_y is None:
@@ -736,7 +758,8 @@ class CEF(ThermodynamicModel):
             else:
                 base_y = self.sample_internal_dof_at_composition(
                     composition,
-                    n_samples,
+                    self.config.gibbs_energy_n_samples_per_dof,
+                    self.config.active_composition_tol,
                 )
                 if cache is not None:
                     cache.gibbs_base_y = base_y.detach()
@@ -784,9 +807,12 @@ class CEF(ThermodynamicModel):
         if (
             sampled_y is None
             and cache is not None
-            and int(self.config.n_samples_cached) > 0
+            and int(self.config.gibbs_energy_n_cached_samples) > 0
         ):
-            k = min(int(self.config.n_samples_cached), optimized_y.shape[0])
+            k = min(
+                int(self.config.gibbs_energy_n_cached_samples),
+                optimized_y.shape[0],
+            )
             indices = torch.topk(values.detach(), k=k, largest=False).indices
             cache.gibbs_live_y = optimized_y.detach()[indices]
 
@@ -1431,7 +1457,11 @@ class CEF(ThermodynamicModel):
 
         sampled_y = multi_simplex_samples_dirichlet(
             self.ncomp_for_each_sublattice,
-            self.config.n_samples,
+            max(
+                self._n_internal_dof()
+                * self.config.grand_potential_n_dirichlet_samples_per_dof,
+                1,
+            ),
         )
         with torch.no_grad():
             sampled_values = self._grand_potential_from_internal_dof(

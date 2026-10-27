@@ -1,4 +1,5 @@
 import math
+import itertools
 import numpy as np
 from scipy.optimize import linprog
 import torch
@@ -12,33 +13,46 @@ R = constants.R # 8.31446261815324
 PRESSURE = constants.atm # 101325
 
 
+def multi_simplex_samples_grid(
+    n_components: typing.Sequence[int],
+    q: int,
+) -> Tensor:
+    """Return the Cartesian product of strictly interior simplex lattices.
+
+    For a binary sublattice, the lattice coordinates are
+    ``1 / (q + 1), ..., q / (q + 1)``. The multi-component generalization
+    uses positive integer barycentric coordinates with denominator
+    ``q + n_components - 1``.
+    """
+    if q < 1:
+        raise ValueError("q must be a positive integer.")
+
+    joint_grid = torch.empty((1, 0), device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE)
+    for n_component in n_components:
+        simplex_grid = _simplex_samples_grid(n_component, q)
+        n_joint = joint_grid.shape[0]
+        joint_grid = torch.cat(
+            [
+                joint_grid.repeat_interleave(simplex_grid.shape[0], dim=0),
+                simplex_grid.repeat((n_joint, 1)),
+            ],
+            dim=-1,
+        )
+    return joint_grid
+
+
 def multi_simplex_samples_dirichlet(
-    n_components: typing.List[int],
-    n_samples_each_side: int,
+    n_components: typing.Sequence[int],
+    n_samples_total: int,
     *,
     eps: float = 1.0e-8,
 ) -> Tensor:
-    """dirichlet samples on the composition simplex.
-    
-    Parameters
-    ---
-    n_components: int
-    n_samples_each_side: int
-        it roughly gives the number of sample for each component.
-    
-    Return a tensor with shape (n_samples, n_comp) with each row sum up 
-    to 1
-    """
-    max_n_components = max(n_components)
-    nsamples_total = int(
-        n_samples_each_side**(max_n_components-1) / math.factorial(max_n_components-1)
-    )
-    
+    """Return joint Dirichlet samples for multiple sublattice simplexes."""
     return torch.hstack(
         [
             simplex_samples_dirichlet(
                 n_components=i,
-                n_samples_total=nsamples_total,
+                n_samples_total=n_samples_total,
                 eps=eps
             ) for i in n_components
         ]
@@ -79,6 +93,18 @@ def simplex_samples_dirichlet(
 
     samples = samples.clamp_min(eps)
     return samples / samples.sum(dim=-1, keepdim=True)
+
+
+def _simplex_samples_grid(n_components: int, q: int) -> Tensor:
+    denominator = q + n_components - 1
+    rows = []
+    for separators in itertools.combinations(range(1, denominator), n_components - 1):
+        boundaries = (0, *separators, denominator)
+        rows.append([
+            boundaries[index + 1] - boundaries[index]
+            for index in range(n_components)
+        ])
+    return torch.as_tensor(rows, device=DEFAULT_DEVICE, dtype=DEFAULT_TYPE) / denominator
 
 
 def hit_and_run_sampling(
