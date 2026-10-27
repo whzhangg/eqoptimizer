@@ -298,6 +298,9 @@ class SymbolicCEFParser:
         self.order_disorder_relations = get_order_disorder_relations_from_tdb_string(
             self.tdb_string
         )
+        self.disordered_reference_phase_names = frozenset(
+            self.order_disorder_relations.values()
+        )
 
         # first parse functions
         self._function_definitions = {}

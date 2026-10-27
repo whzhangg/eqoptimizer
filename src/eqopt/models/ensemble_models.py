@@ -1,4 +1,4 @@
-from collections.abc import MutableMapping, Mapping, Sequence
+from collections.abc import Collection, MutableMapping, Mapping, Sequence
 from typing import Any
 from pathlib import Path
 from torch import Tensor
@@ -13,13 +13,17 @@ from .singlephase_abc import ThermodynamicModel
 
 class EnsembleSystem(ThermodynamicSystem):
 
-    def __init__(self, models_dict: Mapping[PhaseID, ThermodynamicModel]):
+    def __init__(self,
+        models_dict: Mapping[PhaseID, ThermodynamicModel],
+        excluded_phase_ids: Collection[PhaseID] = (),
+    ):
         phase_ids = tuple(models_dict)
         elements = set()
         for phid in phase_ids:
             elements |= set(phid.elements)
 
         super().__init__(phase_ids, elements)
+        self.excluded_phase_ids = frozenset(excluded_phase_ids)
         self._phase_id_to_key = {}
         key_to_model = {}
         for iphase, (phid, model) in enumerate(models_dict.items()):
@@ -28,6 +32,15 @@ class EnsembleSystem(ThermodynamicSystem):
             key_to_model[key] = model
 
         self.key_to_model = nn.ModuleDict(dict(key_to_model))
+
+
+    @property
+    def equilibrium_phase_ids(self) -> tuple[PhaseID, ...]:
+        return tuple(
+            phase_id
+            for phase_id in self.phase_ids
+            if phase_id not in self.excluded_phase_ids
+        )
 
 
     def get_model_by_phase_id(self, phase_id: PhaseID) -> ThermodynamicModel:

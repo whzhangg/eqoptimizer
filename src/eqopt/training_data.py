@@ -174,7 +174,7 @@ def phase_equilibria_to_csv(
 
 def _phase_ids_by_name(system: ThermodynamicSystem) -> Mapping[str, PhaseID]:
     phases_by_name: dict[str, list[PhaseID]] = {}
-    for phase_id in system.phase_ids:
+    for phase_id in system.equilibrium_phase_ids:
         phases_by_name.setdefault(phase_id.name, []).append(phase_id)
 
     ambiguous_names = [name for name, phase_ids in phases_by_name.items() if len(phase_ids) > 1]

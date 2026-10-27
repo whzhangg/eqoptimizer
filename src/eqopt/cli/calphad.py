@@ -96,7 +96,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise TypeError(f"Unknown top-level configuration section(s): {names}")
 
     initial_parameter_scale = float(general_options.pop("initial_parameter_scale", 0.1))
-    output_dir = arguments.output_dir or Path(general_options.pop("output_dir", "results"))
+    config_output_dir = Path(general_options.pop("output_dir", "results"))
+    output_dir = arguments.output_dir or config_output_dir
     record_every = int(general_options.pop("record_every", 10))
     print_final_results = bool(general_options.pop("print_final_results", True))
     if general_options:
@@ -113,7 +114,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     for phase_name, model in parsed_models.items():
         phase_id = PhaseID(name=phase_name, elements=tuple(model.elements))
         models[phase_id] = model
-    system = EnsembleSystem(models)
+    excluded_phase_ids = {
+        phase_id
+        for phase_id in models
+        if phase_id.name in parser.disordered_reference_phase_names
+    }
+    system = EnsembleSystem(models, excluded_phase_ids=excluded_phase_ids)
 
     # load the equilibrium
     equilibria = phase_equilibria_from_csv(arguments.equilibria, system)

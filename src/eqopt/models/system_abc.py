@@ -13,10 +13,20 @@ class ThermodynamicSystem(nn.Module, ABC):
         self.elements = set(elements)
 
 
+    @property
+    def equilibrium_phase_ids(self) -> tuple[PhaseID, ...]:
+        """Return phases that may participate in equilibrium calculations."""
+        return self.phase_ids
+
+
     def get_competing_phases(self, elements: Collection[str]) -> Sequence[PhaseID]:
         """return possible phases from a set of elements"""
         ele_set = set(elements)
-        return [phase for phase in self.phase_ids if set(phase.elements) <= ele_set]
+        return [
+            phase
+            for phase in self.equilibrium_phase_ids
+            if set(phase.elements) <= ele_set
+        ]
 
 
     @abstractmethod
