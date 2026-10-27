@@ -127,14 +127,18 @@ y_{d,i}
 $$
 for each constituent $i$, including vacancies where applicable. The composition of the ordered phase is exactly as the composition of the disordered phase.
 
-## TDB files
+# Optimization
+
+Phase equilibrium with unknown composition can be used for optimization. However, in this case, the success of optimization can depend on initialization. This is because when the composition of the phase is unconstrained, the composition of grand potential minimal may be quite far from expected composition and the optimization may enter a local minimal. This is especially the case as the chemical potential is initialized based on the free energy of the initial model. An example is shown in `Fig_ill_conditioned_optimization.png` where both are possible situation in optimization where one composition of the phase is not known. Note that the chemical potential is driven towards different direction. In the ill conditioned case, this lead to difficulty in optimization towards a global minimal.
+
+# TDB files
 
 `SymbolicCEFParser` reads a restricted subset of the Thermo-Calc TDB format and constructs one
 `CEF` or `SplitCEF` model for each phase. Commands are terminated by `!`, and lines beginning with
 `$` are treated as comments. Inline `$` comments, including references following a command-ending
 `!`, are also removed.
 
-### Phase and constituent definitions
+## Phase and constituent definitions
 
 Both full and abbreviated constituent commands are accepted:
 
@@ -163,7 +167,7 @@ generated automatically.
 The phase data-type field is interpreted as a sequence of one-character codes. For example,
 `%BO` applies the `%`, `B`, and `O` type definitions independently.
 
-### Parameter definitions
+## Parameter definitions
 
 `PARAMETER`, `PARA`, and `PAR` commands are accepted. A parameter may use the regular form:
 
@@ -190,13 +194,24 @@ Energy terms may describe endmembers, binary or ternary mixing on one sublattice
 mixing on two sublattices, as defined in the CEF section above. `TC` and `BM` surfaces are loaded
 when the phase has a matching magnetic type definition.
 
+The wildcard `*` is supported for a complete conditioner-sublattice entry. It indicates that the
+parameter is independent of the constituent occupying that sublattice. For example,
+
+```text
+PARAMETER L(FCC_4SL,AL,NI:*:*:*:VA;0),, expression;,, N reference !
+```
+
+mixes `AL` and `NI` on the first sublattice and is independent of the occupants of the next three
+sublattices. A wildcard contributes a factor of one because the site fractions on its sublattice
+sum to one; constituent combinations are therefore not expanded explicitly.
+
 Each temperature branch is represented by a `ParameterizedExpression`. `T` denotes temperature
 and `P` denotes the fixed standard pressure of one bar. Symbols matching named TDB functions are
 dependencies, and every remaining free symbol is a local trainable parameter. Addition,
 multiplication, numeric powers, `EXP`, `LN`, and `LOG` are supported. For example,
 `GHSERAL+a*5000+b*T` depends on `GHSERAL` and contains the two trainable parameters `a` and `b`.
 
-### Functions and temperature intervals
+## Functions and temperature intervals
 
 Both `FUNCTION` and abbreviated `FUN` commands are accepted. A function may contain several
 temperature branches:
@@ -235,7 +250,7 @@ Cyclic function dependencies raise an error.
 function dependencies. Consequently, identically named free symbols in separate temperature
 branches are independent parameters; named functions remain shared objects.
 
-### Order-disorder definitions
+## Order-disorder definitions
 
 The parser recognizes both full and abbreviated order-disorder type definitions:
 
@@ -248,7 +263,7 @@ All parsed phases are cached by phase name. When an ordered phase is requested, 
 reference is constructed first if necessary and the same model object is supplied to `SplitCEF`.
 `SymbolicCEFParser.get_models()` constructs and returns all phases in a dictionary.
 
-### Current limitations
+## Current limitations
 
 - Pressure-dependent intervals indicated by a negative initial limit are not interpreted. Expressions
   containing `P` are evaluated at one bar.

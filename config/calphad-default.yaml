@@ -20,7 +20,7 @@ optimization:
   unstable_weight: 1.0                  # Weight of the unstable-phase loss.
   regularization_weight: 1.0e-10        # Weight of squared-parameter regularization.
   regularize_difference: false          # Regularize parameter changes instead of values.
-  loss_threshold: null                  # Early-stopping total loss; null disables it.
+  loss_threshold: 1.0                   # Early-stopping total loss; null disables it.
   use_huber_for_stable_phases: true     # Use Huber loss for stable phases.
   relu_margin: 0.0                      # Required unstable-phase grand-potential margin in J/mol.
   unstable_huber_beta: 1.0              # Unstable-phase Huber transition in J/mol; null is linear.
@@ -41,7 +41,7 @@ optimization:
 cef:
   # Sampling and minimum pooling
   n_samples: 64                       # Base internal-coordinate sampling density.
-  n_samples_cached: 4                 # Best points retained as warm starts.
+  n_samples_cached: 8                 # Best points retained as warm starts.
   use_softmin: true                   # Use differentiable softmin instead of minimum.
   softmin_tau: null                   # Softmin temperature in J/mol; null selects automatically.
   eps: 1.0e-8                         # Numerical floor for divisions and logarithms.

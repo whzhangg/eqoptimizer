@@ -1,5 +1,11 @@
 # Change log
 
+## 2026-10-27
+
+- added minimized internal coordinate point in the Gibbs energy to the grand potential samples to faciliate accurate calculation.
+
+- changed the parser to allow "*" for sublattices.
+
 ## 2026-10-24
 
 - added order-disorder model (split-CEF) documented in '/docs/calphad.md'.

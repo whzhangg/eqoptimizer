@@ -598,10 +598,15 @@ class CEF(ThermodynamicModel):
             if cache is not None:
                 cache.grand_potential_base_y = base_y.detach()
 
-        if cache is not None and cache.grand_potential_live_y is not None:
-            sampled_y = torch.cat([base_y, cache.grand_potential_live_y], dim=0)
-        else:
-            sampled_y = base_y
+        sampled_parts = [base_y]
+        gibbs_y = None
+        if cache is not None:
+            if cache.grand_potential_live_y is not None:
+                sampled_parts.append(cache.grand_potential_live_y)
+            if cache.gibbs_live_y is not None:
+                gibbs_y = cache.gibbs_live_y.detach()
+                sampled_parts.append(gibbs_y)
+        sampled_y = torch.cat(sampled_parts, dim=0)
 
         if tau is None:
             if sampled_y.shape[0] == 1:
@@ -686,15 +691,20 @@ class CEF(ThermodynamicModel):
 
                 y = torch.cat(updated_parts, dim=-1)
 
+        pooled_y = y.detach()
+        if gibbs_y is not None:
+            # Retain the constrained Gibbs states themselves in case an EGD
+            # update moves their descendants away from the known tangent point.
+            pooled_y = torch.cat([pooled_y, gibbs_y], dim=0)
         values = self._grand_potential_from_internal_dof(
-            y.detach(),
+            pooled_y,
             mu,
             temperature,
         )
         if cache is not None and int(n_live_y) > 0:
-            k = min(int(n_live_y), y.shape[0])
+            k = min(int(n_live_y), pooled_y.shape[0])
             indices = torch.topk(values.detach(), k=k, largest=False).indices
-            cache.grand_potential_live_y = y.detach()[indices]
+            cache.grand_potential_live_y = pooled_y.detach()[indices]
 
         if use_softmin:
             return -tau * torch.logsumexp(-values / tau, dim=0)

@@ -26,13 +26,15 @@ class CEFContext:
         y: torch.Tensor,
         conditioners: Sequence[tuple[int, str]],
     ) -> torch.Tensor:
-        if len(conditioners) == 0:
+        indices = [
+            self.y_names_to_index[(component, sublattice)]
+            for sublattice, component in conditioners
+            if component != "*"
+        ]
+        if not indices:
             return torch.ones(y.shape[:-1], device=y.device, dtype=y.dtype)
         indices = torch.as_tensor(
-            [
-                self.y_names_to_index[(component, sublattice)]
-                for sublattice, component in conditioners
-            ],
+            indices,
             device=y.device,
             dtype=torch.int64,
         )
@@ -46,6 +48,8 @@ class CEFContext:
         return len(self.sublattice_multiplicities)
 
     def require_site_fraction(self, component: str, sublattice: int) -> None:
+        if component == "*":
+            return
         if (component, sublattice) not in self.y_names_to_index:
             raise ValueError(
                 f"Unknown site fraction ({component!r}, {sublattice}); "
