@@ -1,0 +1,160 @@
+$
+$ Database for Al-Ni from W. Yang et al. 2022.
+$
+$ ---------------------------------------------------------------------------------------------------
+TEMP-LIM 298.15 6000.00 !
+$
+$ELEMENT NAME  REF. STATE               ATOMIC MASS H298-H0    S298    !
+$
+ELEMENT VA   VACUUM                      0.0          0.0      0.0    !
+ELEMENT AL   FCC_A1                     26.98154   4540.      28.30   !
+ELEMENT NI   FCC_A1                     58.69      4787.0     29.7955 !
+$ ---------------------------------------------------------------------------------------------------
+DEFINE-SYSTEM-DEFAULT ELEMENT 2 !
+DEFAULT-COM DEFINE_SYSTEM_ELEMENT VA !
+TYPE-DEF % SEQ * !
+TYPE-DEF A GES AMEND_PHASE_DESCRIPTION @ MAGNETIC -3 0.28 !
+TYPE-DEF B GES AMEND_PHASE_DESCRIPTION @ MAGNETIC -1 0.4 !
+TYPE-DEF O GES AMEND_PHASE_DESCRIPTION B2_BCC DIS_PART BCC_A2 !
+TYPE-DEF Y GES AMEND_PHASE_DESCRIPTION FCC_4SL DIS_PART FCC_A1 !
+$ ---------------------------------------------------------------------------------------------------
+
+PHASE LIQUID:L % 1 1 !
+CONST LIQUID:L : AL NI : !
+PARAMETER  G(LIQUID,AL),,                       +GLIQAL; 2900                               N 91Din !
+PARAMETER  G(LIQUID,NI),,                       +GLIQNI; 3000                               N 91Din !
+PARAMETER  L(LIQUID,AL,NI;0),,                  -194995.1+34.1049*T +1000*a+b*T;,,                      N 22Yan !
+PARAMETER  L(LIQUID,AL,NI;1),,                  +13179.6-10.0111*T +1000*a+b*T;,,                       N 22Yan !
+PARAMETER  L(LIQUID,AL,NI;2),,                  +44039.6-6.0394*T;,,                        N 22Yan !
+$ ---------------------------------------------------------------------------------------------------
+PHASE FCC_A1 %A 2 1 1 !
+CONST FCC_A1 : AL NI : VA : !
+PARAMETER  G(FCC_A1,AL:VA),,                    +GHSERAL; 2900                              N 91Din !
+PARAMETER  G(FCC_A1,NI:VA),,                    +GHSERNI; 3000                              N 91Din !
+PARAMETER  L(FCC_A1,AL,NI:VA;0),,               -194100.7+34.7408*T +1000*a+b*T;,,                      N 22Yan !
+PARAMETER  L(FCC_A1,AL,NI:VA;1),,               +41272.8-13.2615*T +1000*a+b*T;,,                       N 22Yan !
+PARAMETER  L(FCC_A1,AL,NI:VA;2),,               +57081.1-6.7565*T;,,                        N 22Yan !
+PARAMETER  TC(FCC_A1,NI:VA),,                   633.00; 3000                                N 91Din !
+PARAMETER  TC(FCC_A1,AL,NI:VA;0),,              -1112;,,                                    N 01Dup !
+PARAMETER  TC(FCC_A1,AL,NI:VA;1),,              +1745;,,                                    N 01Dup !
+PARAMETER  BMAG(FCC_A1,NI:VA),,                 0.52; 3000                                  N 91Din !
+PARAMETER  BMAG(FCC_A1,AL,NI:VA),,              -1.59;,,                                    N 22Yan !
+$ ---------------------------------------------------------------------------------------------------
+PHASE FCC_4SL %AY 5 0.25 0.25 0.25 0.25 1 !
+CONST FCC_4SL : AL NI% : AL NI% : AL NI% : AL% NI : VA :  !
+PARAMETER  G(FCC_4SL,AL:AL:AL:NI:VA),,          +GFAL3NI;,,                                 N 22Yan !
+PARAMETER  G(FCC_4SL,AL:AL:NI:AL:VA),,          +GFAL3NI;,,                                 N 22Yan !
+PARAMETER  G(FCC_4SL,AL:NI:AL:AL:VA),,          +GFAL3NI;,,                                 N 22Yan !
+PARAMETER  G(FCC_4SL,NI:AL:AL:AL:VA),,          +GFAL3NI;,,                                 N 22Yan !
+PARAMETER  G(FCC_4SL,AL:AL:NI:NI:VA),,          +GFAL2NI2;,,                                N 22Yan !
+PARAMETER  G(FCC_4SL,AL:NI:AL:NI:VA),,          +GFAL2NI2;,,                                N 22Yan !
+PARAMETER  G(FCC_4SL,AL:NI:NI:AL:VA),,          +GFAL2NI2;,,                                N 22Yan !
+PARAMETER  G(FCC_4SL,NI:NI:AL:AL:VA),,          +GFAL2NI2;,,                                N 22Yan !
+PARAMETER  G(FCC_4SL,NI:AL:NI:AL:VA),,          +GFAL2NI2;,,                                N 22Yan !
+PARAMETER  G(FCC_4SL,NI:AL:AL:NI:VA),,          +GFAL2NI2;,,                                N 22Yan !
+PARAMETER  G(FCC_4SL,AL:NI:NI:NI:VA),,          +GFALNI3;,,                                 N 22Yan !
+PARAMETER  G(FCC_4SL,NI:AL:NI:NI:VA),,          +GFALNI3;,,                                 N 22Yan !
+PARAMETER  G(FCC_4SL,NI:NI:AL:NI:VA),,          +GFALNI3;,,                                 N 22Yan !
+PARAMETER  G(FCC_4SL,NI:NI:NI:AL:VA),,          +GFALNI3;,,                                 N 22Yan !
+
+PARAMETER  L(FCC_4SL,AL,NI:*:*:*:VA;0),,        +L0FALNI;,,                                 N 22Yan !
+PARAMETER  L(FCC_4SL,AL,NI:*:*:*:VA;1),,        +L1FALNI;,,                                 N 22Yan !
+PARAMETER  L(FCC_4SL,*:AL,NI:*:*:VA;0),,        +L0FALNI;,,                                 N 22Yan !
+PARAMETER  L(FCC_4SL,*:AL,NI:*:*:VA;1),,        +L1FALNI;,,                                 N 22Yan !
+PARAMETER  L(FCC_4SL,*:*:AL,NI:*:VA;0),,        +L0FALNI;,,                                 N 22Yan !
+PARAMETER  L(FCC_4SL,*:*:AL,NI:*:VA;1),,        +L1FALNI;,,                                 N 22Yan !
+PARAMETER  L(FCC_4SL,*:*:*:AL,NI:VA;0),,        +L0FALNI;,,                                 N 22Yan !
+PARAMETER  L(FCC_4SL,*:*:*:AL,NI:VA;1),,        +L1FALNI;,,                                 N 22Yan !
+
+PARAMETER  L(FCC_4SL,AL,NI:AL,NI:*:*:VA;0),,    +L0TWOSUB;,,                         N 22Yan !
+PARAMETER  L(FCC_4SL,AL,NI:*:AL,NI:*:VA;0),,    +L0TWOSUB;,,                         N 22Yan !
+PARAMETER  L(FCC_4SL,AL,NI:*:*:AL,NI:VA;0),,    +L0TWOSUB;,,                         N 22Yan !
+PARAMETER  L(FCC_4SL,*:*:AL,NI:AL,NI:VA;0),,    +L0TWOSUB;,,                         N 22Yan !
+PARAMETER  L(FCC_4SL,*:AL,NI:*:AL,NI:VA;0),,    +L0TWOSUB;,,                         N 22Yan !
+PARAMETER  L(FCC_4SL,*:AL,NI:AL,NI:*:VA;0),,    +L0TWOSUB;,,                         N 22Yan !
+$ ---------------------------------------------------------------------------------------------------
+PHASE BCC_A2 %B 2 1 3 !
+CONST BCC_A2 : AL NI VA : VA : !
+PARAMETER  G(BCC_A2,AL:VA),,                    +GHSERAL+10083-4.813*T +1000*a+b*T; 2900                N 91Din !
+PARAMETER  G(BCC_A2,NI:VA),,                    +GHSERNI+8715.084-3.556*T +1000*a+b*T; 3000             N 91Din !
+PARAMETER  G(BCC_A2,VA:VA),,                    +30*T;,,                                    N 09Sun !
+PARAMETER  L(BCC_A2,AL,VA:VA;0),,               +46912 +1000*a+b*T;,,                                   N 22Yan !
+PARAMETER  L(BCC_A2,NI,VA:VA;0),,               +160000 +1000*a+b*T;,,                                  N 22Yan !
+PARAMETER  L(BCC_A2,AL,NI:VA;0),,               +GB2ALNI+LB2ALNI +1000*a+b*T;,,                         N 22Yan !
+PARAMETER  TC(BCC_A2,NI:VA),,                   575.00; 3000                                N 91Din !
+PARAMETER  BMAG(BCC_A2,NI:VA),,                 0.85; 3000                                  N 91Din !
+$ ---------------------------------------------------------------------------------------------------
+PHASE B2_BCC %BO 3 0.5 0.5 3 !
+CONST B2_BCC : AL% NI VA : AL NI% VA : VA : !
+PARAMETER  G(B2_BCC,VA:AL:VA),,                 +ZERO;,,                                    N 22Yan !
+PARAMETER  G(B2_BCC,AL:VA:VA),,                 +ZERO;,,                                    N 22Yan !
+PARAMETER  G(B2_BCC,VA:NI:VA),,                 +ZERO;,,                                    N 22Yan !
+PARAMETER  G(B2_BCC,NI:VA:VA),,                 +ZERO;,,                                    N 22Yan !
+PARAMETER  G(B2_BCC,NI:AL:VA),,                 +0.5*GB2ALNI-0.5*LB2ALNI +1000*a+b*T;,,                 N 22Yan !
+PARAMETER  G(B2_BCC,AL:NI:VA),,                 +0.5*GB2ALNI-0.5*LB2ALNI +1000*a+b*T;,,                 N 22Yan !
+PARAMETER  L(B2_BCC,NI,VA:AL:VA;0),,            -124590+3.5559*T +1000*a+b*T;,,                         N 22Yan !
+PARAMETER  L(B2_BCC,AL:NI,VA:VA;0),,            -124590+3.5559*T +1000*a+b*T;,,                         N 22Yan !
+$ ---------------------------------------------------------------------------------------------------
+PHASE HCP_A3 %A 2 1 0.5 !
+CONST HCP_A3 : AL NI : VA : !
+PARAMETER  G(HCP_A3,AL:VA),,                    +GHSERAL+5481-1.8*T +1000*a+b*T; 2900                   N 91Din !
+PARAMETER  G(HCP_A3,NI:VA),,                    +GHSERNI+1046+1.255*T +1000*a+b*T; 3000                 N 91Din !
+PARAMETER  L(HCP_A3,AL,NI:VA;0),,               -194100.7+34.7408*T +1000*a+b*T;,,                      N Same !
+PARAMETER  L(HCP_A3,AL,NI:VA;1),,               +41272.8-13.2615*T +1000*a+b*T;,,                       N Same !
+PARAMETER  L(HCP_A3,AL,NI:VA;2),,               +57081.1-6.7565*T +1000*a+b*T;,,                        N Same !
+PARAMETER  TC(HCP_A3,NI:VA),,                   633.00; 3000                                N 91Din !
+PARAMETER  TC(HCP_A3,AL,NI:VA;0),,              -1112;,,                                    N Same !
+PARAMETER  TC(HCP_A3,AL,NI:VA;1),,              +1745;,,                                    N Same !
+PARAMETER  BMAG(HCP_A3,NI:VA),,                 0.52; 3000                                  N 91Din !
+$ ---------------------------------------------------------------------------------------------------
+PHASE AL3NI_D011 % 2 3 1 !
+CONST AL3NI_D011 : AL : NI : !
+PARAMETER  G(AL3NI_D011,AL:NI),,                +3*GHSERAL+GHSERNI-164713.2+24.5236*T +1000*a+b*T;,,    N 22Yan !
+$ ---------------------------------------------------------------------------------------------------
+PHASE AL3NI2_D513 % 3 3 2 1 !
+CONST AL3NI2_D513 : AL : AL NI% : NI VA% : !
+PARAMETER  G(AL3NI2_D513,AL:AL:VA),,            +5*GBCCAL+30000;,,                          N 22Yan !
+PARAMETER  G(AL3NI2_D513,AL:AL:NI),,            +5*GBCCAL+GBCCNI +1000*a+b*T;,,                         N 22Yan !
+PARAMETER  G(AL3NI2_D513,AL:NI:NI),,            +3*GBCCAL+3*GBCCNI-417056.4+59.6018*T +1000*a+b*T;,,    N 22Yan !
+PARAMETER  G(AL3NI2_D513,AL:NI:VA),,            +3*GBCCAL+2*GBCCNI-367023.6+77.1223*T;,,    N 22Yan !
+PARAMETER  L(AL3NI2_D513,AL:AL,NI:*;0),,        -42336.6 +1000*a+b*T;,,                                 N 22Yan !
+$ ---------------------------------------------------------------------------------------------------
+PHASE AL4NI3 % 2 4 3 !
+CONST AL4NI3 : AL : NI : !
+PARAMETER  G(AL4NI3,AL:NI;0),,                  +4*GHSERAL+3*GHSERNI-452000+70.9386*T +1000*a+b*T;,,    N 22Yan !
+$ ---------------------------------------------------------------------------------------------------
+PHASE AL3NI5 % 2 3 5 !
+CONST AL3NI5 : AL : NI : !
+PARAMETER  G(AL3NI5,AL:NI),,                    +3*GHSERAL+5*GHSERNI-449734.4+66.4*T +1000*a+b*T;,,     N 22Yan !
+$ ---------------------------------------------------------------------------------------------------
+FUNCTION GHSERAL   298.15  -7976.15+137.093038*T-24.3671976*T*LN(T)
+      -0.001884662*T**2-8.77664E-07*T**3+74092*T**(-1);
+      700.00  Y  -11276.24+223.048446*T-38.5844296*T*LN(T)
+      +0.018531982*T**2 -5.764227E-06*T**3+74092*T**(-1);
+      933.47  Y  -11278.361+188.684136*T-31.748192*T*LN(T)
+      -1.230622E+28*T**(-9);
+     2900.00  N !
+FUNCTION GLIQAL    298.15  +11005.045-11.84185*T+GHSERAL+7.9337E-20*T**7;
+      933.47  Y  -795.991+177.430209*T-31.748192*T*LN(T);
+     2900.00  N !
+FUNCTION GBCCAL    298.15  +GHSERAL+10083-4.813*T;                    2900 N !
+FUNCTION GHSERNI   298.15  -5179.159+117.854*T-22.096*T*LN(T)-0.0048407*T**2;
+     1728.00  Y  -27840.62+279.134977*T-43.1*T*LN(T)+1.12754E+31*T**(-9);
+     3000.00  N !
+FUNCTION GLIQNI    298.15  +16414.686-9.397*T+GHSERNI-3.82318E-21*T**7;
+     1728.00  Y  -9549.817+268.597977*T-43.1*T*LN(T);
+     3000.00  N !
+FUNCTION GBCCNI    298.15  +GHSERNI+8715.084-3.556*T;                 3000 N !
+FUNCTION U1FALNI   298.15  -18423.9+5.19437*T;                        6000 N !
+FUNCTION GFALNI3   298.15  +3*U1FALNI +1000*a+b*T;                                6000 N !
+FUNCTION GFAL3NI   298.15  +3*U1FALNI+28443.3+7.90519*T +1000*a+b*T;              6000 N !
+FUNCTION GFAL2NI2  298.15  +4*U1FALNI-1734.4+2.64282*T +1000*a+b*T;               6000 N !
+FUNCTION L0FALNI   298.15  +519.2 +1000*a+b*T;                                    6000 N !
+FUNCTION L1FALNI   298.15  +3812.2-3*T +1000*a+b*T;                               6000 N !
+FUNCTION L0TWOSUB  298.15  -31345.5+9.422*T +1000*a+b*T;                       6000 N !
+FUNCTION GB2ALNI   298.15  -148060+24.306*T;                          6000 N !
+FUNCTION LB2ALNI   298.15  -67723+21.681*T;                           6000 N !
+FUNCTION ZERO      298.15  0;                                         6000 N !
+FUNCTION UN_ASS    298.15  0;                                         6000 N !
+FUNCTION R         298.15  +8.31451;                                  6000 N !
+$ ---------------------------------------------------------------------------------------------------

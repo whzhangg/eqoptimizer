@@ -12,6 +12,7 @@ examples/06-AuCu/results/*.pt
 examples/06-AuCu/resources/*.py
 examples/06-AuCu/previous
 examples/07-CrFe/results
+examples/08*/results
 examples/09*/results
 
 examples/**/figures/
