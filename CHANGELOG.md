@@ -1,10 +1,36 @@
 # Change log
 
+## 2026-10-28
+
+- improved grand-potential EGD to reject uphill proposals jointly across sublattices for each
+  sample, restore its accepted state and gradient, and halve its step sizes. Acceptance checks
+  reuse existing evaluations rather than introducing a full backtracking loop.
+
+- cached grand-potential step sizes alongside live coordinates so warm starts retain progress
+  instead of repeating overshooting updates.
+
+- added `grand_potential_initial_steps_factor`, defaulting to 4, to increase the descent budget
+  on the first grand-potential evaluation with a fresh runtime cache.
+
 ## 2026-10-27
 
 - added minimized internal coordinate point in the Gibbs energy to the grand potential samples to faciliate accurate calculation.
 
 - changed the parser to allow "*" for sublattices.
+
+- disordered reference phases are excluded from the considered phases that can participate in equilibrium. This is done by adding "excluded_phase_ids" to the system.
+
+- added interior simplex `q`-grid sampling for grand-potential minimization, combined with
+  optional Dirichlet samples and cached live points.
+
+- separated Gibbs-energy and grand-potential sampling options. Random sample counts now scale
+  with the number of internal degrees of freedom.
+
+- separated composition-specific Gibbs runtime caches from phase-specific grand-potential
+  caches, preventing repeated occurrences of the same phase from sharing Gibbs states.
+
+- updated TDB export to write optimized `FUNCTION` definitions with their original temperature
+  intervals instead of copying the initial definitions unchanged.
 
 ## 2026-10-24
 

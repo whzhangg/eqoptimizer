@@ -30,6 +30,8 @@ class CEFCache:
     Gibbs and grand-potential evaluations use separate instances because Gibbs
     caches are composition-specific, while one grand-potential cache is shared
     by each unique phase within an equilibrium calculation.
+    Grand-potential live step sizes follow the same row order as live y and
+    retain reductions made when rejecting uphill joint-sublattice proposals.
     """
 
     gibbs_base_y: torch.Tensor | None = None
@@ -37,6 +39,7 @@ class CEFCache:
     gibbs_eta_factor: float = 1.0
     grand_potential_base_y: torch.Tensor | None = None
     grand_potential_live_y: torch.Tensor | None = None
+    grand_potential_live_eta: torch.Tensor | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -53,6 +56,7 @@ class CEFConfig:
     grand_potential_n_dirichlet_samples_per_dof: int = 16  # random samples per DOF
     grand_potential_n_cached_samples: int = 4    # retained live minima
     grand_potential_steps: int = 6              # EGD steps for grand potential
+    grand_potential_initial_steps_factor: int = 4  # multiply steps for a fresh cache
     grand_potential_delta: float = 0.3          # target simplex step size
     max_step_factor: float = 1.5                # shrink step if update exceeds this
 
@@ -265,6 +269,9 @@ class CEF(ThermodynamicModel):
         temperature: float,
         runtime_data: CEFCache = None,
     ):
+        n_steps = self.config.grand_potential_steps
+        if runtime_data is None or runtime_data.grand_potential_base_y is None:
+            n_steps *= self.config.grand_potential_initial_steps_factor
         n_dirichlet_samples = max(
             self._n_internal_dof()
             * self.config.grand_potential_n_dirichlet_samples_per_dof,
@@ -276,7 +283,7 @@ class CEF(ThermodynamicModel):
             cache=runtime_data,
             n_dirichlet_samples=n_dirichlet_samples,
             grid_q=self.config.grand_potential_grid_q,
-            n_steps=self.config.grand_potential_steps,
+            n_steps=n_steps,
             use_softmin=self.config.use_softmin,
             delta=self.config.grand_potential_delta,
             tau=self.config.softmin_tau,
@@ -594,11 +601,13 @@ class CEF(ThermodynamicModel):
 
         1) combine an interior grid with joint Dirichlet samples
         2) for all points, perform exponential gradient descent for k steps
-        3) from the final result, do a softmin
+        3) pool the best accepted state of each trajectory
 
         The descent trajectory is detached from the outer graph. The final
         softmin recomputes grand-potential values on the refined site fractions
         so gradients still flow to thermodynamic parameters and mu.
+        Uphill proposals are rejected jointly across sublattices, using the
+        next iteration's evaluation, and retried with halved step sizes.
         """
         temperature = scalar_temperature(temperature)
         mu = get_tensor_mu(mu, self.elements)
@@ -637,6 +646,14 @@ class CEF(ThermodynamicModel):
                 gibbs_y = cache.gibbs_live_y.detach()
                 sampled_parts.append(gibbs_y)
         sampled_y = torch.cat(sampled_parts, dim=0)
+        # One step size per sample and sublattice, aligned with cached live y.
+        eta = sampled_y.new_full(
+            (sampled_y.shape[0], len(self.ncomp_for_each_sublattice)), float('nan'),
+        )
+        if cache is not None and cache.grand_potential_live_eta is not None:
+            start = base_y.shape[0]
+            stop = start + cache.grand_potential_live_y.shape[0]
+            eta[start:stop] = cache.grand_potential_live_eta
 
         if tau is None:
             if sampled_y.shape[0] == 1:
@@ -654,18 +671,19 @@ class CEF(ThermodynamicModel):
                 k = min(int(n_cached_samples), sampled_y.shape[0])
                 indices = torch.topk(values.detach(), k=k, largest=False).indices
                 cache.grand_potential_live_y = sampled_y.detach()[indices]
+                cache.grand_potential_live_eta = None
             if use_softmin:
                 return -tau * torch.logsumexp(-values / tau, dim=0)
             return torch.min(values)
 
         y = sampled_y.detach()
         sampling_mu = mu.detach()
-        eta_by_sublattice: list[torch.Tensor | None] = [
-            None for _ in self.ncomp_for_each_sublattice
-        ]
+        accepted_y = None
+        accepted_values = None
+        accepted_grad = None
 
         with torch.enable_grad():
-            for _ in range(int(n_steps)):
+            for step in range(int(n_steps)):
                 y = y.detach().requires_grad_(True)
                 values = self._grand_potential_from_internal_dof(
                     y,
@@ -679,6 +697,15 @@ class CEF(ThermodynamicModel):
                     posinf=0.0,
                     neginf=0.0,
                 )
+                if accepted_y is not None:
+                    accept = torch.isfinite(values.detach()) & (values.detach() <= accepted_values)
+                    y = torch.where(accept[:, None], y.detach(), accepted_y)
+                    grad_y = torch.where(accept[:, None], grad_y.detach(), accepted_grad)
+                    values = torch.where(accept, values.detach(), accepted_values)
+                    eta = torch.where(accept[:, None], eta, 0.5 * eta)
+                accepted_y = y.detach()
+                accepted_values = values.detach()
+                accepted_grad = grad_y.detach()
 
                 updated_parts = []
                 column_start = 0
@@ -694,17 +721,13 @@ class CEF(ThermodynamicModel):
 
                     g_bar = (w * g).sum(dim=-1, keepdim=True)
                     centered_g = g - g_bar
-                    if eta_by_sublattice[sublattice] is None:
-                        scale = (w * centered_g.abs()).amax(
-                            dim=-1,
-                            keepdim=True,
+                    step_eta = eta[:, sublattice:sublattice + 1]
+                    if step == 0:
+                        scale = (w * centered_g.abs()).amax(dim=-1, keepdim=True)
+                        step_eta = torch.where(
+                            torch.isnan(step_eta), delta / scale.clamp_min(eps), step_eta,
                         )
-                        eta_by_sublattice[sublattice] = (
-                            delta / scale.clamp_min(eps)
-                        )
-
-                    eta = eta_by_sublattice[sublattice]
-                    proposed = self._exp_gradient_update(w, centered_g, eta)
+                    proposed = self._exp_gradient_update(w, centered_g, step_eta)
                     actual_step = (proposed - w).abs().amax(
                         dim=-1,
                         keepdim=True,
@@ -712,9 +735,9 @@ class CEF(ThermodynamicModel):
                     too_large = actual_step > max_step_factor * delta
                     if torch.any(too_large):
                         shrink = delta / actual_step.clamp_min(eps)
-                        eta = torch.where(too_large, eta * shrink, eta)
-                        proposed = self._exp_gradient_update(w, centered_g, eta)
-                        eta_by_sublattice[sublattice] = eta
+                        step_eta = torch.where(too_large, step_eta * shrink, step_eta)
+                        proposed = self._exp_gradient_update(w, centered_g, step_eta)
+                    eta[:, sublattice:sublattice + 1] = step_eta
 
                     updated_parts.append(proposed.detach())
                     column_start = column_stop
@@ -731,10 +754,28 @@ class CEF(ThermodynamicModel):
             mu,
             temperature,
         )
+        # Check the last proposal too; recompute rejected states with the outer
+        # graph rather than returning their detached inner-solver energies.
+        n_trajectories = y.shape[0]
+        final_values = values[:n_trajectories].detach()
+        rejected = ~torch.isfinite(final_values) | (final_values > accepted_values)
+        if bool(torch.any(rejected)):
+            indices = torch.nonzero(rejected, as_tuple=True)[0]
+            restored_y = accepted_y[indices]
+            restored_values = self._grand_potential_from_internal_dof(
+                restored_y, mu, temperature,
+            )
+            pooled_y = pooled_y.index_copy(0, indices, restored_y)
+            values = values.index_copy(0, indices, restored_values)
+            eta = torch.where(rejected[:, None], 0.5 * eta, eta)
         if cache is not None and int(n_cached_samples) > 0:
             k = min(int(n_cached_samples), pooled_y.shape[0])
             indices = torch.topk(values.detach(), k=k, largest=False).indices
             cache.grand_potential_live_y = pooled_y.detach()[indices]
+            if gibbs_y is not None:
+                gibbs_eta = eta.new_full((gibbs_y.shape[0], eta.shape[1]), float('nan'))
+                eta = torch.cat([eta, gibbs_eta], dim=0)
+            cache.grand_potential_live_eta = eta.detach()[indices]
 
         if use_softmin:
             return -tau * torch.logsumexp(-values / tau, dim=0)
