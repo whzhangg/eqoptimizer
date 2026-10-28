@@ -90,10 +90,12 @@ PARAMETER  G(B2_BCC,VA:AL:VA),,                 +ZERO;,,                        
 PARAMETER  G(B2_BCC,AL:VA:VA),,                 +ZERO;,,                                    N 22Yan !
 PARAMETER  G(B2_BCC,VA:NI:VA),,                 +ZERO;,,                                    N 22Yan !
 PARAMETER  G(B2_BCC,NI:VA:VA),,                 +ZERO;,,                                    N 22Yan !
-PARAMETER  G(B2_BCC,NI:AL:VA),,                 +0.5*GB2ALNI-0.5*LB2ALNI +1000*a+b*T;,,                 N 22Yan !
-PARAMETER  G(B2_BCC,AL:NI:VA),,                 +0.5*GB2ALNI-0.5*LB2ALNI +1000*a+b*T;,,                 N 22Yan !
-PARAMETER  L(B2_BCC,NI,VA:AL:VA;0),,            -124590+3.5559*T +1000*a+b*T;,,                         N 22Yan !
-PARAMETER  L(B2_BCC,AL:NI,VA:VA;0),,            -124590+3.5559*T +1000*a+b*T;,,                         N 22Yan !
+PARAMETER  G(B2_BCC,NI:AL:VA),,                 +B2AINI;,,                 N 22Yan !
+PARAMETER  G(B2_BCC,AL:NI:VA),,                 +B2AINI;,,                 N 22Yan !
+PARAMETER  L(B2_BCC,NI,VA:AL:VA;0),,            B2L;,,                         N 22Yan !
+PARAMETER  L(B2_BCC,AL:NI,VA:VA;0),,            B2L;,,                         N 22Yan !
+FUNCTION   B2AINI     298 +0.5*GB2ALNI-0.5*LB2ALNI; 6000 N !
+FUNCTION   B2L        298 -124590+3.5559*T + 1000*a+b*T; 6000  N !
 $ ---------------------------------------------------------------------------------------------------
 PHASE HCP_A3 %A 2 1 0.5 !
 CONST HCP_A3 : AL NI : VA : !
@@ -109,23 +111,23 @@ PARAMETER  BMAG(HCP_A3,NI:VA),,                 0.52; 3000                      
 $ ---------------------------------------------------------------------------------------------------
 PHASE AL3NI_D011 % 2 3 1 !
 CONST AL3NI_D011 : AL : NI : !
-PARAMETER  G(AL3NI_D011,AL:NI),,                +3*GHSERAL+GHSERNI-164713.2+24.5236*T +1000*a+b*T;,,    N 22Yan !
+PARAMETER  G(AL3NI_D011,AL:NI),,                +3*GHSERAL+GHSERNI-164713.2+24.5236*T +4000*a+4*b*T;,,    N 22Yan !
 $ ---------------------------------------------------------------------------------------------------
 PHASE AL3NI2_D513 % 3 3 2 1 !
 CONST AL3NI2_D513 : AL : AL NI% : NI VA% : !
 PARAMETER  G(AL3NI2_D513,AL:AL:VA),,            +5*GBCCAL+30000;,,                          N 22Yan !
-PARAMETER  G(AL3NI2_D513,AL:AL:NI),,            +5*GBCCAL+GBCCNI +1000*a+b*T;,,                         N 22Yan !
-PARAMETER  G(AL3NI2_D513,AL:NI:NI),,            +3*GBCCAL+3*GBCCNI-417056.4+59.6018*T +1000*a+b*T;,,    N 22Yan !
-PARAMETER  G(AL3NI2_D513,AL:NI:VA),,            +3*GBCCAL+2*GBCCNI-367023.6+77.1223*T;,,    N 22Yan !
-PARAMETER  L(AL3NI2_D513,AL:AL,NI:*;0),,        -42336.6 +1000*a+b*T;,,                                 N 22Yan !
+PARAMETER  G(AL3NI2_D513,AL:AL:NI),,            +5*GBCCAL+GBCCNI +6000*a+6*b*T;,,                         N 22Yan !
+PARAMETER  G(AL3NI2_D513,AL:NI:NI),,            +3*GBCCAL+3*GBCCNI-417056.4+59.6018*T +6000*a+6*b*T;,,    N 22Yan !
+PARAMETER  G(AL3NI2_D513,AL:NI:VA),,            +3*GBCCAL+2*GBCCNI-367023.6+77.1223*T +6000*a+6*b*T;,,    N 22Yan !
+PARAMETER  L(AL3NI2_D513,AL:AL,NI:*;0),,        -42336.6 +6000*a+6*b*T;,,                                 N 22Yan !
 $ ---------------------------------------------------------------------------------------------------
 PHASE AL4NI3 % 2 4 3 !
 CONST AL4NI3 : AL : NI : !
-PARAMETER  G(AL4NI3,AL:NI;0),,                  +4*GHSERAL+3*GHSERNI-452000+70.9386*T +1000*a+b*T;,,    N 22Yan !
+PARAMETER  G(AL4NI3,AL:NI;0),,                  +4*GHSERAL+3*GHSERNI-452000+70.9386*T +7000*a+7*b*T;,,    N 22Yan !
 $ ---------------------------------------------------------------------------------------------------
 PHASE AL3NI5 % 2 3 5 !
 CONST AL3NI5 : AL : NI : !
-PARAMETER  G(AL3NI5,AL:NI),,                    +3*GHSERAL+5*GHSERNI-449734.4+66.4*T +1000*a+b*T;,,     N 22Yan !
+PARAMETER  G(AL3NI5,AL:NI),,                    +3*GHSERAL+5*GHSERNI-449734.4+66.4*T +8000*a+8*b*T;,,     N 22Yan !
 $ ---------------------------------------------------------------------------------------------------
 FUNCTION GHSERAL   298.15  -7976.15+137.093038*T-24.3671976*T*LN(T)
       -0.001884662*T**2-8.77664E-07*T**3+74092*T**(-1);

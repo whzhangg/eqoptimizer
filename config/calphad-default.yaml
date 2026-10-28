@@ -1,7 +1,8 @@
 # Reference configuration for eqopt-calphad using all program defaults.
 general:
   output_dir: results                   # Directory for outputs.
-  record_every: 50                      # Epoch interval for full loss recording and checkpointing.
+  seed: 42                              # Random seed; null leaves unset; --seed overrides.
+  record_every: 10                      # Epoch interval for full loss recording and checkpointing.
   print_final_results: true             # Print chemical potentials and phase grand potentials.
   initial_parameter_scale: 0.1          # Symbol initialization std.; 0 gives exact zeros.
 
@@ -47,15 +48,15 @@ cef:
   # Grand-potential sampling and minimization
   grand_potential_grid_q: 2           # Interior simplex-grid resolution; null disables it.
   grand_potential_n_dirichlet_samples_per_dof: 16  # Random joint samples per internal DOF.
-  grand_potential_n_cached_samples: 8 # Best grand-potential points retained as warm starts.
+  grand_potential_n_cached_samples: 16 # Best grand-potential points retained as warm starts.
   grand_potential_steps: 6            # Number of exponentiated-gradient steps.
-  grand_potential_initial_steps_factor: 4  # Multiply steps on first call per runtime cache.
   grand_potential_delta: 0.3          # Target simplex update size.
+  grand_potential_initial_steps_factor: 4  # Multiply steps on first call per runtime cache.
   max_step_factor: 1.5                # Backtrack above this multiple of delta.
 
   # Fixed-composition Gibbs-energy sampling and minimization
   gibbs_energy_n_samples_per_dof: 16  # Feasible hit-and-run samples per active DOF.
-  gibbs_energy_n_cached_samples: 8    # Best feasible points retained as warm starts.
+  gibbs_energy_n_cached_samples: 16    # Best feasible points retained as warm starts.
   gibbs_energy_steps: 6               # Number of constrained exponentiated-gradient steps.
   gibbs_energy_delta: 0.3             # Target constrained update size.
   gibbs_energy_max_logit_step: 3.0    # Maximum site-fraction logit change per step.

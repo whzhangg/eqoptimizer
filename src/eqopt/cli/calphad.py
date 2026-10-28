@@ -1,8 +1,10 @@
 import argparse
 import dataclasses
+import random
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+import numpy as np
 import torch
 import yaml
 
@@ -86,6 +88,10 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("equilibria", type=Path, help="Phase-equilibrium training CSV file.")
     parser.add_argument("--config", type=Path, help="Optional YAML configuration file.")
     parser.add_argument(
+        "--seed", type=int,
+        help="Random seed for initialization and sampling, overriding general.seed in YAML.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         help="Output directory, overriding general.output_dir from the YAML file.",
@@ -106,11 +112,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     initial_parameter_scale = float(general_options.pop("initial_parameter_scale", 0.1))
     config_output_dir = Path(general_options.pop("output_dir", "results"))
     output_dir = arguments.output_dir or config_output_dir
+    config_seed = general_options.pop("seed", None)
+    seed = arguments.seed if arguments.seed is not None else config_seed
     record_every = int(general_options.pop("record_every", 10))
     print_final_results = bool(general_options.pop("print_final_results", True))
     if general_options:
         names = ", ".join(sorted(general_options))
         raise TypeError(f"Unknown general configuration option(s): {names}")
+
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
     # load the thermodynamic models
     parser = SymbolicCEFParser(
